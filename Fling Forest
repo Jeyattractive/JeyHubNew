@@ -1,0 +1,1727 @@
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+local RS               = game:GetService("ReplicatedStorage")
+local LocalPlayer      = Players.LocalPlayer
+
+local function GetGuiParent()
+    if typeof(gethui) == "function" then
+        local ok, hui = pcall(gethui)
+        if ok and hui then return hui end
+    end
+    local ok, pg = pcall(function() return LocalPlayer:WaitForChild("PlayerGui", 5) end)
+    if ok and pg then return pg end
+    return game:GetService("CoreGui")
+end
+
+local ACCENT   = Color3.fromRGB(255, 255, 255)
+local BG       = Color3.fromRGB(18, 18, 18)
+local ELEM     = Color3.fromRGB(28, 28, 28)
+local ELEM_HOV = Color3.fromRGB(44, 44, 44)
+local TEXT     = Color3.fromRGB(235, 235, 235)
+local SUB      = Color3.fromRGB(140, 140, 140)
+local STROKE   = Color3.fromRGB(46, 46, 46)
+
+local function corner(inst, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 6)
+    c.Parent = inst
+    return c
+end
+local function stroke(inst, col, t, tr)
+    local s = Instance.new("UIStroke")
+    s.Color = col or STROKE
+    s.Thickness = t or 1
+    s.Transparency = tr or 0
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = inst
+    return s
+end
+local function pad(inst, l, r, t, b)
+    local p = Instance.new("UIPadding")
+    p.PaddingLeft   = UDim.new(0, l or 8)
+    p.PaddingRight  = UDim.new(0, r or 8)
+    p.PaddingTop    = UDim.new(0, t or 8)
+    p.PaddingBottom = UDim.new(0, b or 8)
+    p.Parent = inst
+end
+local function tween(inst, time, props)
+    TweenService:Create(inst, TweenInfo.new(time or 0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "JeyhubMini"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = GetGuiParent()
+
+local W, H = 260, 380
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.AnchorPoint = Vector2.new(0.5, 0.5)
+main.Position = UDim2.new(0.5, 0, 0.5, 0)
+main.Size = UDim2.new(0, W, 0, H)
+main.BackgroundColor3 = BG
+main.BorderSizePixel = 0
+main.Parent = screenGui
+corner(main, 10)
+stroke(main, STROKE, 1, 0.3)
+
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 30)
+header.BackgroundColor3 = ELEM
+header.BorderSizePixel = 0
+header.Parent = main
+corner(header, 10)
+local headerCover = Instance.new("Frame")
+headerCover.Size = UDim2.new(1, 0, 0.5, 0)
+headerCover.Position = UDim2.new(0, 0, 0.5, 0)
+headerCover.BackgroundColor3 = ELEM
+headerCover.BorderSizePixel = 0
+headerCover.Parent = header
+
+local titleLbl = Instance.new("TextLabel")
+titleLbl.BackgroundTransparency = 1
+titleLbl.Position = UDim2.new(0, 10, 0, 0)
+titleLbl.Size = UDim2.new(1, -70, 1, 0)
+titleLbl.Font = Enum.Font.GothamBold
+titleLbl.Text = "JEYHUB MINI"
+titleLbl.TextColor3 = TEXT
+titleLbl.TextSize = 11
+titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+titleLbl.Parent = header
+
+local function headerBtn(txt, xOff)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 22, 0, 22)
+    b.Position = UDim2.new(1, xOff, 0.5, -11)
+    b.BackgroundColor3 = ELEM
+    b.BorderSizePixel = 0
+    b.Font = Enum.Font.GothamBold
+    b.Text = txt
+    b.TextColor3 = SUB
+    b.TextSize = 12
+    b.AutoButtonColor = false
+    b.Parent = header
+    corner(b, 5)
+    b.MouseEnter:Connect(function() tween(b, 0.1, { BackgroundColor3 = ELEM_HOV, TextColor3 = TEXT }) end)
+    b.MouseLeave:Connect(function() tween(b, 0.1, { BackgroundColor3 = ELEM,     TextColor3 = SUB  }) end)
+    return b
+end
+local minBtn   = headerBtn("–", -56)
+local closeBtn = headerBtn("×", -30)
+
+local content = Instance.new("ScrollingFrame")
+content.Position = UDim2.new(0, 0, 0, 30)
+content.Size = UDim2.new(1, 0, 1, -30)
+content.BackgroundTransparency = 1
+content.BorderSizePixel = 0
+content.ScrollBarThickness = 3
+content.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80)
+content.CanvasSize = UDim2.new(0, 0, 0, 0)
+content.AutomaticCanvasSize = Enum.AutomaticSize.Y
+content.Parent = main
+pad(content, 8, 8, 8, 8)
+local list = Instance.new("UIListLayout")
+list.SortOrder = Enum.SortOrder.LayoutOrder
+list.Padding = UDim.new(0, 6)
+list.Parent = content
+
+local function MakeSection(text)
+    local s = Instance.new("TextLabel")
+    s.Size = UDim2.new(1, 0, 0, 14)
+    s.BackgroundTransparency = 1
+    s.Font = Enum.Font.GothamBold
+    s.Text = string.upper(text)
+    s.TextColor3 = SUB
+    s.TextSize = 9
+    s.TextXAlignment = Enum.TextXAlignment.Left
+    s.Parent = content
+    return s
+end
+
+local function MakeNote(text)
+    local s = Instance.new("TextLabel")
+    s.Size = UDim2.new(1, 0, 0, 22)
+    s.BackgroundTransparency = 1
+    s.Font = Enum.Font.Gotham
+    s.Text = text
+    s.TextColor3 = Color3.fromRGB(105, 105, 105)
+    s.TextSize = 9
+    s.TextWrapped = true
+    s.TextXAlignment = Enum.TextXAlignment.Left
+    s.Parent = content
+    return s
+end
+
+local function MakeToggle(text, default, callback)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 28)
+    row.BackgroundColor3 = ELEM
+    row.BorderSizePixel = 0
+    row.Parent = content
+    corner(row, 6)
+    stroke(row, STROKE, 1, 0.5)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.Size = UDim2.new(1, -55, 1, 0)
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.Text = text
+    lbl.TextColor3 = TEXT
+    lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextTruncate = Enum.TextTruncate.AtEnd
+    lbl.Parent = row
+
+    local state = default == true
+    local pill = Instance.new("Frame")
+    pill.AnchorPoint = Vector2.new(1, 0.5)
+    pill.Position = UDim2.new(1, -10, 0.5, 0)
+    pill.Size = UDim2.new(0, 30, 0, 16)
+    pill.BackgroundColor3 = state and ACCENT or Color3.fromRGB(50, 50, 50)
+    pill.BorderSizePixel = 0
+    pill.Parent = row
+    corner(pill, 8)
+
+    local knob = Instance.new("Frame")
+    knob.AnchorPoint = Vector2.new(0, 0.5)
+    knob.Position = state and UDim2.new(1, -14, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+    knob.Size = UDim2.new(0, 12, 0, 12)
+    knob.BackgroundColor3 = state and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(180, 180, 180)
+    knob.BorderSizePixel = 0
+    knob.Parent = pill
+    corner(knob, 6)
+
+    local hit = Instance.new("TextButton")
+    hit.Size = UDim2.new(1, 0, 1, 0)
+    hit.BackgroundTransparency = 1
+    hit.Text = ""
+    hit.Parent = row
+
+    local function render()
+        tween(pill, 0.15, { BackgroundColor3 = state and ACCENT or Color3.fromRGB(50, 50, 50) })
+        tween(knob, 0.15, {
+            Position = state and UDim2.new(1, -14, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
+            BackgroundColor3 = state and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(180, 180, 180),
+        })
+    end
+
+    hit.MouseButton1Click:Connect(function()
+        state = not state
+        render()
+        if callback then pcall(callback, state) end
+    end)
+
+    return {
+        Set = function(v, silent)
+            state = v == true
+            render()
+            if not silent and callback then pcall(callback, state) end
+        end,
+        Get = function() return state end,
+    }
+end
+
+local function MakeSlider(text, min, max, default, step, callback)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 42)
+    row.BackgroundColor3 = ELEM
+    row.BorderSizePixel = 0
+    row.Parent = content
+    corner(row, 6)
+    stroke(row, STROKE, 1, 0.5)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Position = UDim2.new(0, 10, 0, 4)
+    lbl.Size = UDim2.new(1, -100, 0, 14)
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.Text = text
+    lbl.TextColor3 = TEXT
+    lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextTruncate = Enum.TextTruncate.AtEnd
+    lbl.Parent = row
+
+    local inputBox = Instance.new("TextBox")
+    inputBox.AnchorPoint = Vector2.new(1, 0)
+    inputBox.Position = UDim2.new(1, -8, 0, 3)
+    inputBox.Size = UDim2.new(0, 76, 0, 16)
+    inputBox.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    inputBox.BorderSizePixel = 0
+    inputBox.Font = Enum.Font.GothamBold
+    inputBox.Text = tostring(default)
+    inputBox.TextColor3 = ACCENT
+    inputBox.TextSize = 10
+    inputBox.TextXAlignment = Enum.TextXAlignment.Center
+    inputBox.ClearTextOnFocus = false
+    inputBox.Parent = row
+    corner(inputBox, 4)
+    local inputStroke = stroke(inputBox, STROKE, 1, 0.6)
+
+    local track = Instance.new("Frame")
+    track.Position = UDim2.new(0, 10, 1, -14)
+    track.Size = UDim2.new(1, -20, 0, 4)
+    track.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    track.BorderSizePixel = 0
+    track.Parent = row
+    corner(track, 2)
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(0, 0, 1, 0)
+    fill.BackgroundColor3 = ACCENT
+    fill.BorderSizePixel = 0
+    fill.Parent = track
+    corner(fill, 2)
+
+    local value = default
+    local dragging = false
+    local typing = false
+
+    local function fmt(v)
+        if step and step < 0.01 then return string.format("%.3f", v) end
+        if step and step < 1 then return string.format("%.2f", v) end
+        return tostring(math.floor(v + 0.5))
+    end
+
+    local function setVal(v, skipInputUpdate)
+        v = tonumber(v) or value
+        if step and step > 0 then
+            v = math.floor(v / step + 0.5) * step
+        end
+        value = v
+        local clamped = math.clamp(v, min, max)
+        local pct = (clamped - min) / math.max(1e-6, max - min)
+        fill.Size = UDim2.new(pct, 0, 1, 0)
+        if not skipInputUpdate and not typing then
+            inputBox.Text = fmt(v)
+        end
+        if callback then pcall(callback, value) end
+    end
+
+    local hit = Instance.new("TextButton")
+    hit.Size = UDim2.new(1, 0, 0, 20)
+    hit.Position = UDim2.new(0, 0, 1, -22)
+    hit.BackgroundTransparency = 1
+    hit.Text = ""
+    hit.Parent = row
+
+    local function updateFromX(px)
+        local rel = (px - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X)
+        setVal(min + math.clamp(rel, 0, 1) * (max - min))
+    end
+
+    hit.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            updateFromX(input.Position.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateFromX(input.Position.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    inputBox.Focused:Connect(function()
+        typing = true
+        tween(inputStroke, 0.1, { Color = ACCENT, Transparency = 0.1 })
+    end)
+    inputBox.FocusLost:Connect(function(enterPressed)
+        typing = false
+        tween(inputStroke, 0.15, { Color = STROKE, Transparency = 0.6 })
+        local num = tonumber(inputBox.Text)
+        if num then
+            setVal(num, true)
+        end
+        inputBox.Text = fmt(value)
+    end)
+
+    setVal(default, true)
+
+    return {
+        Set = function(v) setVal(v) end,
+        Get = function() return value end,
+    }
+end
+
+local function MakeButton(text, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 28)
+    btn.BackgroundColor3 = ELEM
+    btn.BorderSizePixel = 0
+    btn.Font = Enum.Font.GothamBold
+    btn.Text = text
+    btn.TextColor3 = TEXT
+    btn.TextSize = 10
+    btn.AutoButtonColor = false
+    btn.Parent = content
+    corner(btn, 6)
+    stroke(btn, STROKE, 1, 0.5)
+    btn.MouseEnter:Connect(function() tween(btn, 0.1, { BackgroundColor3 = ELEM_HOV }) end)
+    btn.MouseLeave:Connect(function() tween(btn, 0.1, { BackgroundColor3 = ELEM }) end)
+    btn.MouseButton1Click:Connect(function() if callback then pcall(callback) end end)
+    return btn
+end
+
+local function Notify(titleText, msg)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "[JeyMini] " .. tostring(titleText),
+            Text = tostring(msg),
+            Duration = 2,
+        })
+    end)
+end
+
+local function MakeDragHandle(handle)
+    local dragging, dragStart, startPos = false, nil, nil
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos  = main.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+MakeDragHandle(header)
+
+local EDGE = 6
+local edgeTop = Instance.new("Frame")
+edgeTop.Size = UDim2.new(1, 0, 0, EDGE)
+edgeTop.Position = UDim2.new(0, 0, 0, 0)
+edgeTop.BackgroundTransparency = 1
+edgeTop.ZIndex = 5
+edgeTop.Parent = main
+
+local edgeBottom = Instance.new("Frame")
+edgeBottom.Size = UDim2.new(1, 0, 0, EDGE)
+edgeBottom.Position = UDim2.new(0, 0, 1, -EDGE)
+edgeBottom.BackgroundTransparency = 1
+edgeBottom.ZIndex = 5
+edgeBottom.Parent = main
+
+local edgeLeft = Instance.new("Frame")
+edgeLeft.Size = UDim2.new(0, EDGE, 1, 0)
+edgeLeft.Position = UDim2.new(0, 0, 0, 0)
+edgeLeft.BackgroundTransparency = 1
+edgeLeft.ZIndex = 5
+edgeLeft.Parent = main
+
+local edgeRight = Instance.new("Frame")
+edgeRight.Size = UDim2.new(0, EDGE, 1, 0)
+edgeRight.Position = UDim2.new(1, -EDGE, 0, 0)
+edgeRight.BackgroundTransparency = 1
+edgeRight.ZIndex = 5
+edgeRight.Parent = main
+
+MakeDragHandle(edgeTop)
+MakeDragHandle(edgeBottom)
+MakeDragHandle(edgeLeft)
+MakeDragHandle(edgeRight)
+
+local miniIcon = Instance.new("TextButton")
+miniIcon.Name = "MiniIcon"
+miniIcon.Size = UDim2.new(0, 36, 0, 36)
+miniIcon.Position = UDim2.new(0, 30, 0, 30)
+miniIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+miniIcon.BackgroundColor3 = BG
+miniIcon.BorderSizePixel = 0
+miniIcon.Font = Enum.Font.GothamBlack
+miniIcon.Text = "J"
+miniIcon.TextColor3 = ACCENT
+miniIcon.TextSize = 15
+miniIcon.Visible = false
+miniIcon.Parent = screenGui
+corner(miniIcon, 10)
+stroke(miniIcon, STROKE, 1, 0.4)
+
+local savedOpenPosition = main.Position
+local savedMiniPosition = nil
+local minimized = false
+
+local function setMinimized(state)
+    if minimized == state then return end
+    minimized = state
+    if state then
+        savedOpenPosition = main.Position
+        main.Visible = false
+        if savedMiniPosition then
+            miniIcon.Position = savedMiniPosition
+        else
+            miniIcon.Position = main.Position
+        end
+        miniIcon.Visible = true
+    else
+        savedMiniPosition = miniIcon.Position
+        main.Position = savedOpenPosition
+        miniIcon.Visible = false
+        main.Visible = true
+    end
+end
+
+minBtn.MouseButton1Click:Connect(function() setMinimized(true) end)
+
+do
+    local dragging, dragStart, startPos = false, nil, nil
+    local pressPos, moved = nil, false
+    miniIcon.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging  = true
+            dragStart = input.Position
+            startPos  = miniIcon.Position
+            pressPos  = input.Position
+            moved     = false
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            if (input.Position - pressPos).Magnitude > 5 then moved = true end
+            miniIcon.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if dragging and not moved then
+                setMinimized(false)
+            end
+            dragging = false
+        end
+    end)
+end
+
+closeBtn.MouseButton1Click:Connect(function()
+    tween(main, 0.15, { BackgroundTransparency = 1 })
+    task.delay(0.16, function() screenGui:Destroy() end)
+end)
+
+MakeSection("Forest Fling")
+
+MakeButton("Run Server (WM_Req)", function()
+    if RS:FindFirstChild("WM_Req") then
+        Notify("Fling", "Server script already active")
+        return
+    end
+    task.spawn(function()
+        local ok, err = pcall(function()
+            local remote  = Instance.new("RemoteEvent")
+            remote.Name   = "WM_Req"
+            remote.Parent = RS
+            local function applyMass(char, density)
+                if not char then return end
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+                        p.CustomPhysicalProperties = PhysicalProperties.new(density, 0.3, 0.0, 0.1, 0.1)
+                    end
+                end
+            end
+            remote.OnServerEvent:Connect(function(sender, density)
+                applyMass(sender.Character, density)
+            end)
+        end)
+        Notify("Fling", ok and "Server script executed!" or ("Failed: " .. tostring(err)))
+    end)
+end)
+
+MakeSection("Brutal")
+
+local wBrut_HEAVY  = 150
+local wBrut_LIGHT  = 0.001
+local wBrut_NORMAL = 0.7
+local wBrut_FORCE  = 999999999999999999
+local wBrut_enabled = false
+local wBrut_force   = nil
+local wBrut_lastSit = false
+local wBrut_lastPax = nil
+
+local function wBrut_getRemote() return RS:FindFirstChild("WM_Req") end
+local function wBrut_removeForce()
+    if wBrut_force and wBrut_force.Parent then wBrut_force:Destroy() end
+    wBrut_force = nil
+end
+local function wBrut_applyForce(char)
+    wBrut_removeForce()
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local bf = Instance.new("BodyForce")
+    bf.Force  = Vector3.new(0, wBrut_FORCE, 0)
+    bf.Parent = root
+    wBrut_force = bf
+end
+local function wBrut_fire(target, density)
+    local rem = wBrut_getRemote()
+    if rem then rem:FireServer(target, density) end
+end
+local function wBrut_resetAll()
+    local char = LocalPlayer.Character
+    if char then wBrut_fire(char, wBrut_NORMAL) end
+    if wBrut_lastPax then wBrut_fire(wBrut_lastPax, wBrut_NORMAL) end
+    wBrut_removeForce()
+    wBrut_lastSit = false
+    wBrut_lastPax = nil
+end
+local function wBrut_isSitting(char)
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and hum:GetState() == Enum.HumanoidStateType.Seated then return true end
+    if hum and hum.SeatPart ~= nil then return true end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if root then
+        for _, w in ipairs(root:GetChildren()) do
+            if w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D") then
+                local op = (w.Part0 ~= root) and w.Part0 or w.Part1
+                if op and op.Parent ~= char then return true end
+            end
+        end
+    end
+    return false
+end
+local function wBrut_getPax()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    for _, part in ipairs(workspace:GetDescendants()) do
+        if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
+            local oc = part.Occupant.Parent
+            if oc ~= char and Players:GetPlayerFromCharacter(oc) then return oc end
+        end
+    end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") or tool:IsA("Model") then
+            for _, part in ipairs(tool:GetDescendants()) do
+                if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
+                    local oc = part.Occupant.Parent
+                    if oc ~= char then return oc end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+RunService.Heartbeat:Connect(function()
+    if not wBrut_enabled then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local sitting   = wBrut_isSitting(char)
+    local passenger = wBrut_getPax()
+    if sitting then
+        if not wBrut_lastSit then
+            wBrut_fire(char, wBrut_LIGHT)
+            wBrut_applyForce(char)
+        end
+    else
+        if wBrut_lastSit then
+            wBrut_fire(char, wBrut_NORMAL)
+            wBrut_removeForce()
+        end
+        if passenger ~= wBrut_lastPax then
+            if wBrut_lastPax then wBrut_fire(wBrut_lastPax, wBrut_NORMAL) end
+            if passenger    then wBrut_fire(passenger, wBrut_HEAVY) end
+        end
+    end
+    wBrut_lastSit = sitting
+    wBrut_lastPax = passenger
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    wBrut_lastSit = false
+    wBrut_lastPax = nil
+    wBrut_force   = nil
+end)
+
+MakeToggle("Brutal", false, function(state)
+    wBrut_enabled = state
+    if not state then
+        wBrut_resetAll()
+    else
+        wBrut_lastSit = false
+        wBrut_lastPax = nil
+    end
+end)
+
+MakeSection("Light")
+
+local wLite_HEAVY  = 150
+local wLite_LIGHT  = 0.001
+local wLite_NORMAL = 0.7
+local wLite_modeA     = false
+local wLite_modeB     = false
+local wLite_force     = nil
+local wLite_lastSit   = false
+local wLite_lastPax   = nil
+local wLite_lastScan  = 0
+local wLite_cachedPax = nil
+local wLite_SCAN_GAP  = 0.3
+
+local function wLite_getRemote() return RS:FindFirstChild("WM_Req") end
+local function wLite_removeForce()
+    if wLite_force and wLite_force.Parent then wLite_force:Destroy() end
+    wLite_force = nil
+end
+local function wLite_applyForce(char, forceY)
+    wLite_removeForce()
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local bf = Instance.new("BodyForce")
+    bf.Force  = Vector3.new(0, forceY, 0)
+    bf.Parent = root
+    wLite_force = bf
+end
+local function wLite_fire(target, density)
+    local rem = wLite_getRemote()
+    if rem then rem:FireServer(target, density) end
+end
+local function wLite_isSitting()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    return hum:GetState() == Enum.HumanoidStateType.Seated
+end
+local function wLite_scanPax()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    for _, part in ipairs(workspace:GetDescendants()) do
+        if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
+            local oc = part.Occupant.Parent
+            if oc ~= char and Players:GetPlayerFromCharacter(oc) then return oc end
+        end
+    end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") or tool:IsA("Model") then
+            for _, part in ipairs(tool:GetDescendants()) do
+                if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
+                    local oc = part.Occupant.Parent
+                    if oc ~= char then return oc end
+                end
+            end
+        end
+    end
+    return nil
+end
+local function wLite_resetAll()
+    local char = LocalPlayer.Character
+    if char then wLite_fire(char, wLite_NORMAL) end
+    if wLite_lastPax then wLite_fire(wLite_lastPax, wLite_NORMAL) end
+    wLite_removeForce()
+    wLite_lastSit   = false
+    wLite_lastPax   = nil
+    wLite_cachedPax = nil
+end
+
+RunService.Heartbeat:Connect(function()
+    if not wLite_modeA and not wLite_modeB then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local sitting = wLite_isSitting()
+    local now = tick()
+    if now - wLite_lastScan >= wLite_SCAN_GAP then
+        wLite_cachedPax = wLite_scanPax()
+        wLite_lastScan  = now
+    end
+    local passenger = wLite_cachedPax
+    if wLite_modeA then
+        if sitting then
+            if not wLite_lastSit then
+                wLite_fire(char, wLite_HEAVY)
+                wLite_applyForce(char, -workspace.Gravity * 80)
+            end
+        else
+            if wLite_lastSit then
+                wLite_fire(char, wLite_NORMAL)
+                wLite_removeForce()
+            end
+            if passenger ~= wLite_lastPax then
+                if wLite_lastPax then wLite_fire(wLite_lastPax, wLite_NORMAL) end
+                if passenger    then wLite_fire(passenger, wLite_LIGHT) end
+            end
+        end
+    elseif wLite_modeB then
+        if sitting then
+            if not wLite_lastSit then
+                wLite_fire(char, wLite_LIGHT)
+                wLite_applyForce(char, workspace.Gravity * 80)
+            end
+        else
+            if wLite_lastSit then
+                wLite_fire(char, wLite_NORMAL)
+                wLite_removeForce()
+            end
+            if passenger ~= wLite_lastPax then
+                if wLite_lastPax then wLite_fire(wLite_lastPax, wLite_NORMAL) end
+                if passenger    then wLite_fire(passenger, wLite_HEAVY) end
+            end
+        end
+    end
+    wLite_lastSit = sitting
+    wLite_lastPax = passenger
+end)
+
+local wLiteTogA, wLiteTogB
+wLiteTogA = MakeToggle("Mode A", false, function(state)
+    wLite_modeA = state
+    if state then
+        wLite_modeB = false
+        if wLiteTogB then wLiteTogB.Set(false, true) end
+        wLite_resetAll()
+    else
+        wLite_resetAll()
+    end
+end)
+wLiteTogB = MakeToggle("Mode B", false, function(state)
+    wLite_modeB = state
+    if state then
+        wLite_modeA = false
+        if wLiteTogA then wLiteTogA.Set(false, true) end
+        wLite_resetAll()
+    else
+        wLite_resetAll()
+    end
+end)
+
+MakeSection("Auto Sit")
+
+local wAS_excludedPlayers = {}
+local wAS_enabled   = false
+local wAS_wbModel   = nil
+local wAS_wbSeat    = nil
+local wAS_wbTick    = 0
+local wAS_maxDist   = 30
+local wAS_autoTurun    = false
+local wAS_turunDelay   = 0.05
+local wAS_sitStartTick = 0
+local wAS_sitTracked   = false
+local wAS_lastWB       = nil
+
+local function wAS_isSeatFree(wbModel, myHum)
+    for _, p in ipairs(wbModel:GetDescendants()) do
+        if p:IsA("VehicleSeat") or p:IsA("Seat") then
+            local occ = nil
+            pcall(function() occ = p.Occupant end)
+            if occ and occ ~= myHum then return false end
+        end
+    end
+    return true
+end
+
+local function wAS_findPusher(wbModel)
+    local handlesPart = nil
+    pcall(function()
+        for _, p in ipairs(wbModel:GetDescendants()) do
+            if p:IsA("BasePart") and p.Name:lower() == "handles" then
+                handlesPart = p; break
+            end
+        end
+        if not handlesPart then
+            for _, p in ipairs(wbModel:GetDescendants()) do
+                if p:IsA("BasePart") then handlesPart = p; break end
+            end
+        end
+    end)
+    local function humFromPart(part)
+        if not part then return nil end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer then
+                local ch = plr.Character
+                if ch and part:IsDescendantOf(ch) then
+                    return ch:FindFirstChildOfClass("Humanoid")
+                end
+            end
+        end
+        return nil
+    end
+    local pusherHum = nil
+    pcall(function()
+        for _, w in ipairs(wbModel:GetDescendants()) do
+            if w:IsA("Weld") or w:IsA("WeldConstraint") then
+                pusherHum = humFromPart(w.Part0) or humFromPart(w.Part1)
+                if pusherHum then return end
+            end
+        end
+    end)
+    if pusherHum then return pusherHum end
+    pcall(function()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer then
+                local ch = plr.Character
+                if ch then
+                    for _, w in ipairs(ch:GetDescendants()) do
+                        if w:IsA("Weld") or w:IsA("WeldConstraint") then
+                            local p0inWB = w.Part0 and w.Part0:IsDescendantOf(wbModel)
+                            local p1inWB = w.Part1 and w.Part1:IsDescendantOf(wbModel)
+                            if p0inWB or p1inWB then
+                                pusherHum = ch:FindFirstChildOfClass("Humanoid")
+                                return
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if pusherHum then return pusherHum end
+    if handlesPart then
+        local nearDist = 10
+        pcall(function()
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    local ch   = plr.Character
+                    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+                    if root then
+                        local d = (root.Position - handlesPart.Position).Magnitude
+                        if d < nearDist then
+                            nearDist  = d
+                            pusherHum = ch:FindFirstChildOfClass("Humanoid")
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    return pusherHum
+end
+
+local function wAS_humToPlayerName(hum)
+    if not hum then return nil end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local ch = plr.Character
+            if ch and ch:FindFirstChildOfClass("Humanoid") == hum then
+                return plr.Name
+            end
+        end
+    end
+    return nil
+end
+
+local VEHICLE_PATTERNS_AS = {
+    "wheel.*barrow", "^carriage$", "carriage", "gerobak", "^cart$", "vehicle",
+}
+
+local function wAS_findNearestWB(root, maxDist)
+    local char  = LocalPlayer.Character
+    local myHum = char and char:FindFirstChildOfClass("Humanoid")
+    if myHum and myHum.SeatPart and myHum.SeatPart:IsA("VehicleSeat") then
+        local seatModel = myHum.SeatPart:FindFirstAncestorOfClass("Model")
+        if seatModel then return seatModel end
+    end
+    local best, bestDist = nil, maxDist
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local lname = obj.Name:lower()
+            local isVehicle = false
+            for _, pat in ipairs(VEHICLE_PATTERNS_AS) do
+                if lname:match(pat) then isVehicle = true; break end
+            end
+            if isVehicle then
+                if obj == wAS_lastWB then
+                elseif wAS_isSeatFree(obj, myHum) then
+                    local pusherBlocking = false
+                    pcall(function()
+                        local ph = wAS_findPusher(obj)
+                        if ph then
+                            local pName = wAS_humToPlayerName(ph)
+                            if pName and wAS_excludedPlayers[pName] then
+                                pusherBlocking = true
+                                return
+                            end
+                            local pusherSeated = ph.SeatPart ~= nil
+                            if not pusherSeated then
+                                local stOk, st = pcall(function() return ph:GetState() end)
+                                pusherSeated = stOk and (st == Enum.HumanoidStateType.Seated)
+                            end
+                            pusherBlocking = pusherSeated
+                        end
+                    end)
+                    if not pusherBlocking then
+                        for _, p in ipairs(obj:GetDescendants()) do
+                            if p:IsA("BasePart") then
+                                local d = (root.Position - p.Position).Magnitude
+                                if d < bestDist then bestDist = d; best = obj end
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function wAS_getSeat(wbModel)
+    if not wbModel then return nil end
+    for _, p in ipairs(wbModel:GetDescendants()) do
+        if p:IsA("VehicleSeat") then return p end
+    end
+    for _, p in ipairs(wbModel:GetDescendants()) do
+        if p:IsA("Seat") then return p end
+    end
+    return nil
+end
+
+local function wAS_cleanup()
+    wAS_wbModel      = nil
+    wAS_wbSeat       = nil
+    wAS_wbTick       = 0
+    wAS_sitStartTick = 0
+    wAS_sitTracked   = false
+end
+
+RunService.Heartbeat:Connect(function()
+    if not wAS_enabled then return end
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not char or not root or not hum then return end
+    wAS_wbTick = wAS_wbTick + 1
+    if wAS_wbTick >= 20 then
+        wAS_wbTick = 0
+        if wAS_wbModel and not wAS_wbModel.Parent then wAS_cleanup() end
+        local found = wAS_findNearestWB(root, wAS_maxDist)
+        if found and found ~= wAS_wbModel then
+            wAS_wbModel = found
+            wAS_wbSeat  = wAS_getSeat(found)
+        elseif not found then
+            wAS_cleanup()
+        end
+    end
+    if wAS_wbSeat and wAS_wbSeat.Parent then
+        pcall(function()
+            if hum.SeatPart == wAS_wbSeat then
+                if not hum.Sit then hum.Sit = true end
+                if wAS_autoTurun then
+                    if not wAS_sitTracked then
+                        wAS_sitStartTick = tick()
+                        wAS_sitTracked   = true
+                    else
+                        if tick() - wAS_sitStartTick >= wAS_turunDelay then
+                            if wAS_wbModel then wAS_lastWB = wAS_wbModel end
+                            hum.Sit = false
+                            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+                            wAS_cleanup()
+                        end
+                    end
+                end
+            elseif not hum.SeatPart then
+                wAS_sitTracked = false
+                wAS_wbSeat:Sit(hum)
+            end
+        end)
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    wAS_wbModel      = nil
+    wAS_wbSeat       = nil
+    wAS_wbTick       = 0
+    wAS_sitStartTick = 0
+    wAS_sitTracked   = false
+    wAS_lastWB       = nil
+end)
+
+MakeSlider("Radius Scan", 5, 100, 30, 5, function(v) wAS_maxDist = v end)
+MakeToggle("Auto Sit", false, function(state)
+    wAS_enabled = state
+    if state then
+        wAS_lastWB = nil
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            local found = wAS_findNearestWB(root, wAS_maxDist)
+            if found then
+                wAS_wbModel = found
+                wAS_wbSeat  = wAS_getSeat(found)
+            end
+        end
+    else
+        wAS_cleanup()
+    end
+end)
+MakeSlider("Durasi Duduk (Auto Turun)", 0.001, 0.5, 0.05, 0.001, function(v) wAS_turunDelay = v end)
+MakeToggle("Auto Turun", false, function(state)
+    wAS_autoTurun    = state
+    wAS_sitStartTick = 0
+    wAS_sitTracked   = false
+    wAS_lastWB       = nil
+end)
+
+local exclLabel = Instance.new("TextLabel")
+exclLabel.Size = UDim2.new(1, 0, 0, 12)
+exclLabel.BackgroundTransparency = 1
+exclLabel.Font = Enum.Font.Gotham
+exclLabel.Text = "Exclude Player (klik nama):"
+exclLabel.TextColor3 = SUB
+exclLabel.TextSize = 9
+exclLabel.TextXAlignment = Enum.TextXAlignment.Left
+exclLabel.Parent = content
+
+local exclFrame = Instance.new("Frame")
+exclFrame.Size = UDim2.new(1, 0, 0, 110)
+exclFrame.BackgroundColor3 = ELEM
+exclFrame.BorderSizePixel = 0
+exclFrame.Parent = content
+corner(exclFrame, 6)
+stroke(exclFrame, STROKE, 1, 0.5)
+
+local exclScroll = Instance.new("ScrollingFrame")
+exclScroll.Size = UDim2.new(1, -6, 1, -6)
+exclScroll.Position = UDim2.new(0, 3, 0, 3)
+exclScroll.BackgroundTransparency = 1
+exclScroll.BorderSizePixel = 0
+exclScroll.ScrollBarThickness = 3
+exclScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80)
+exclScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+exclScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+exclScroll.Parent = exclFrame
+local exclList = Instance.new("UIListLayout")
+exclList.SortOrder = Enum.SortOrder.LayoutOrder
+exclList.Padding = UDim.new(0, 3)
+exclList.Parent = exclScroll
+
+local function buildExclRow(plr)
+    local row = Instance.new("TextButton")
+    row.Size = UDim2.new(1, 0, 0, 22)
+    row.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+    row.BorderSizePixel = 0
+    row.Font = Enum.Font.GothamMedium
+    row.Text = "  " .. plr.DisplayName .. "  (@" .. plr.Name .. ")"
+    row.TextColor3 = SUB
+    row.TextSize = 9
+    row.TextXAlignment = Enum.TextXAlignment.Left
+    row.TextTruncate = Enum.TextTruncate.AtEnd
+    row.AutoButtonColor = false
+    row.Parent = exclScroll
+    corner(row, 4)
+
+    local function applyState()
+        if wAS_excludedPlayers[plr.Name] then
+            row.TextColor3       = Color3.fromRGB(220, 90, 90)
+            row.BackgroundColor3 = Color3.fromRGB(38, 22, 22)
+        else
+            row.TextColor3       = SUB
+            row.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+        end
+    end
+    applyState()
+
+    row.MouseButton1Click:Connect(function()
+        if wAS_excludedPlayers[plr.Name] then
+            wAS_excludedPlayers[plr.Name] = nil
+        else
+            wAS_excludedPlayers[plr.Name] = true
+        end
+        applyState()
+    end)
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    if plr ~= LocalPlayer then buildExclRow(plr) end
+end
+Players.PlayerAdded:Connect(function(plr)
+    if plr ~= LocalPlayer then buildExclRow(plr) end
+end)
+Players.PlayerRemoving:Connect(function(plr)
+    wAS_excludedPlayers[plr.Name] = nil
+end)
+
+MakeSection("Wheelbarrow Fly")
+
+local wFly_speed   = 60
+local wFly_enabled = false
+local wFly_UIS     = UserInputService
+
+local wFly_thumbX  = 0
+local wFly_thumbY  = 0
+local wFly_mobUp   = false
+local wFly_mobDown = false
+local wFly_mobFwd  = false
+local wFly_mobBwd  = false
+local wFly_mobUpB  = nil
+local wFly_mobDnB  = nil
+local wFly_mobFwdB = nil
+local wFly_mobBwdB = nil
+
+local wFly_wbLV      = nil
+local wFly_wbAtt     = nil
+local wFly_wbBase    = nil
+local wFly_wbWelds   = {}
+local wFly_wbAnchSave = {}
+local wFly_wbModel   = nil
+local wFly_wbTick    = 0
+local wFly_wbSeat    = nil
+local wFly_savedWS   = 16
+local wFly_savedJP   = 50
+
+pcall(function()
+    wFly_UIS.ThumbstickMoved:Connect(function(stick, pos)
+        if stick == Enum.KeyCode.Thumbstick1 then
+            wFly_thumbX = pos.X
+            wFly_thumbY = pos.Y
+        end
+    end)
+end)
+
+local wFly_isTouch = (function()
+    local ok, v = pcall(function() return wFly_UIS.TouchEnabled end)
+    return ok and v == true
+end)()
+
+task.spawn(function()
+    if not wFly_isTouch then return end
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
+    if not playerGui then return end
+    task.wait(1.5)
+
+    local gui          = Instance.new("ScreenGui")
+    gui.Name           = "JeyhubWbFlyMobile"
+    gui.ResetOnSpawn   = false
+    gui.IgnoreGuiInset = true
+    gui.Parent         = playerGui
+
+    local BTN  = 48
+    local STEP = 54
+    local CX   = 136
+    local CY   = 148
+
+    local function mkBtn(icon)
+        local b = Instance.new("TextButton")
+        b.Size                   = UDim2.new(0, BTN, 0, BTN)
+        b.BackgroundColor3       = Color3.fromRGB(14, 14, 14)
+        b.BackgroundTransparency = 0.28
+        b.TextColor3             = Color3.fromRGB(210, 210, 210)
+        b.Text                   = icon
+        b.TextSize               = 19
+        b.Font                   = Enum.Font.GothamBold
+        b.AutoButtonColor        = false
+        b.Visible                = false
+        b.Parent                 = gui
+        corner(b, 10)
+        stroke(b, Color3.fromRGB(160, 160, 160), 1, 0.55)
+        return b
+    end
+
+    local half = BTN / 2
+    wFly_mobFwdB          = mkBtn("▲")
+    wFly_mobFwdB.Position = UDim2.new(1, -(CX + half), 1, -(CY + STEP + half))
+    wFly_mobBwdB          = mkBtn("▼")
+    wFly_mobBwdB.Position = UDim2.new(1, -(CX + half), 1, -(CY - STEP + half))
+    wFly_mobUpB           = mkBtn("\u{2191}")
+    wFly_mobUpB.Position  = UDim2.new(1, -(CX + STEP + half), 1, -(CY + half))
+    wFly_mobDnB           = mkBtn("\u{2193}")
+    wFly_mobDnB.Position  = UDim2.new(1, -(CX - STEP + half), 1, -(CY + half))
+
+    local function bindBtn(btn, onBegin, onEnd)
+        btn.InputBegan:Connect(function(i)
+            if i.UserInputType ~= Enum.UserInputType.Touch then return end
+            btn.BackgroundTransparency = 0.08
+            onBegin()
+        end)
+        btn.InputEnded:Connect(function(i)
+            if i.UserInputType ~= Enum.UserInputType.Touch then return end
+            btn.BackgroundTransparency = 0.28
+            onEnd()
+        end)
+    end
+    bindBtn(wFly_mobFwdB, function() wFly_mobFwd  = true  end, function() wFly_mobFwd  = false end)
+    bindBtn(wFly_mobBwdB, function() wFly_mobBwd  = true  end, function() wFly_mobBwd  = false end)
+    bindBtn(wFly_mobUpB,  function() wFly_mobUp   = true  end, function() wFly_mobUp   = false end)
+    bindBtn(wFly_mobDnB,  function() wFly_mobDown = true  end, function() wFly_mobDown = false end)
+end)
+
+local function wFly_makeLV(part)
+    local att             = Instance.new("Attachment")
+    att.Position          = Vector3.zero
+    att.Parent            = part
+    local lv              = Instance.new("LinearVelocity")
+    lv.Attachment0        = att
+    lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+    lv.RelativeTo         = Enum.ActuatorRelativeTo.World
+    lv.VectorVelocity     = Vector3.zero
+    lv.MaxForce           = math.huge
+    lv.Parent             = part
+    return lv, att
+end
+
+local function wFly_cleanupWb()
+    pcall(function() if wFly_wbLV  then wFly_wbLV:Destroy()  end end)
+    pcall(function() if wFly_wbAtt then wFly_wbAtt:Destroy() end end)
+    for _, w in ipairs(wFly_wbWelds) do pcall(function() w:Destroy() end) end
+    wFly_wbWelds = {}
+    for part, wasAnch in pairs(wFly_wbAnchSave) do
+        pcall(function() part.Anchored = wasAnch end)
+    end
+    wFly_wbAnchSave = {}
+    wFly_wbLV, wFly_wbAtt, wFly_wbBase, wFly_wbModel = nil, nil, nil, nil
+    wFly_wbSeat = nil
+end
+
+local VEHICLE_PATTERNS_FLY = {
+    "wheel.*barrow", "^carriage$", "carriage", "gerobak", "^cart$", "vehicle",
+}
+local function wFly_findNearestWB(root, maxDist)
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.SeatPart then
+            local seatModel = hum.SeatPart:FindFirstAncestorOfClass("Model")
+            if seatModel then return seatModel end
+        end
+    end
+    local best, bestDist = nil, maxDist
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local lname = obj.Name:lower()
+            local isVehicle = false
+            for _, pat in ipairs(VEHICLE_PATTERNS_FLY) do
+                if lname:match(pat) then isVehicle = true; break end
+            end
+            if isVehicle then
+                for _, p in ipairs(obj:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        local d = (root.Position - p.Position).Magnitude
+                        if d < bestDist then bestDist = d; best = obj end
+                        break
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function wFly_attachWb(wbModel)
+    wFly_cleanupWb()
+    local base = wbModel:FindFirstChild("Base") or wbModel:FindFirstChild("Chassis")
+    if not base then
+        for _, p in ipairs(wbModel:GetDescendants()) do
+            if p:IsA("VehicleSeat") or p:IsA("Seat") then base = p; break end
+        end
+    end
+    if not base then
+        for _, p in ipairs(wbModel:GetDescendants()) do
+            if p:IsA("BasePart") then base = p; break end
+        end
+    end
+    if not base then return end
+    wFly_wbModel = wbModel
+    wFly_wbBase  = base
+    wFly_wbAnchSave[base] = base.Anchored
+    pcall(function() base.Anchored = false end)
+    for _, p in ipairs(wbModel:GetDescendants()) do
+        if p:IsA("BasePart") and p ~= base then
+            wFly_wbAnchSave[p] = p.Anchored
+            pcall(function() p.Anchored = false end)
+            local wc   = Instance.new("WeldConstraint")
+            wc.Part0   = base
+            wc.Part1   = p
+            wc.Parent  = base
+            table.insert(wFly_wbWelds, wc)
+        end
+    end
+    for _, inst in ipairs(base:GetDescendants()) do
+        if inst:IsA("BodyVelocity") then
+            pcall(function() inst.maxForce = Vector3.zero end)
+        elseif inst:IsA("BodyAngularVelocity") then
+            pcall(function() inst.maxTorque = Vector3.zero end)
+        end
+    end
+    for _, inst in ipairs(wbModel:GetDescendants()) do
+        if inst:IsA("BodyVelocity") then
+            pcall(function() inst.maxForce = Vector3.zero end)
+        elseif inst:IsA("BodyAngularVelocity") then
+            pcall(function() inst.maxTorque = Vector3.zero end)
+        end
+    end
+    wFly_wbLV, wFly_wbAtt = wFly_makeLV(base)
+    wFly_wbSeat = nil
+    for _, p in ipairs(wbModel:GetDescendants()) do
+        if p:IsA("Seat") or p:IsA("VehicleSeat") then wFly_wbSeat = p; break end
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    if not wFly_enabled then return end
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not root then return end
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    wFly_wbTick = wFly_wbTick + 1
+    if wFly_wbTick >= 20 then
+        wFly_wbTick = 0
+        if wFly_wbModel and not wFly_wbModel.Parent then wFly_cleanupWb() end
+        local found = wFly_findNearestWB(root, 8)
+        if found and found ~= wFly_wbModel then
+            wFly_attachWb(found)
+        elseif not found and wFly_wbModel then
+            wFly_cleanupWb()
+        end
+    end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function()
+            if hum.WalkSpeed ~= 16 then hum.WalkSpeed = 16 end
+            if hum.JumpPower ~= 0  then hum.JumpPower = 0  end
+        end)
+        if wFly_wbSeat then
+            pcall(function()
+                if hum.SeatPart == wFly_wbSeat then
+                    if not hum.Sit then hum.Sit = true end
+                elseif not hum.SeatPart then
+                    wFly_wbSeat:Sit(hum)
+                end
+            end)
+        end
+    end
+    local hDir = Vector3.zero
+    local vY   = 0
+    if wFly_isTouch then
+        local dz = 0.15
+        if math.abs(wFly_thumbX) > dz or math.abs(wFly_thumbY) > dz then
+            local fwd = cam.CFrame.LookVector
+            local rgt = cam.CFrame.RightVector
+            fwd = Vector3.new(fwd.X, 0, fwd.Z)
+            rgt = Vector3.new(rgt.X, 0, rgt.Z)
+            if fwd.Magnitude > 0.01 then fwd = fwd.Unit end
+            if rgt.Magnitude > 0.01 then rgt = rgt.Unit end
+            hDir = rgt * wFly_thumbX + fwd * wFly_thumbY
+        end
+        if wFly_mobFwd or wFly_mobBwd then
+            local fwd = cam.CFrame.LookVector
+            fwd = Vector3.new(fwd.X, 0, fwd.Z)
+            if fwd.Magnitude > 0.01 then fwd = fwd.Unit end
+            if wFly_mobFwd then hDir = hDir + fwd end
+            if wFly_mobBwd then hDir = hDir - fwd end
+        end
+        if wFly_mobUp   then vY =  1 end
+        if wFly_mobDown then vY = -1 end
+    else
+        local lv = cam.CFrame.LookVector
+        local rv = cam.CFrame.RightVector
+        local flatFwd = Vector3.new(lv.X, 0, lv.Z)
+        local flatRgt = Vector3.new(rv.X, 0, rv.Z)
+        if flatFwd.Magnitude > 0.01 then flatFwd = flatFwd.Unit end
+        if flatRgt.Magnitude > 0.01 then flatRgt = flatRgt.Unit end
+        if wFly_UIS:IsKeyDown(Enum.KeyCode.W) then hDir = hDir + flatFwd end
+        if wFly_UIS:IsKeyDown(Enum.KeyCode.S) then hDir = hDir - flatFwd end
+        if wFly_UIS:IsKeyDown(Enum.KeyCode.A) then hDir = hDir - flatRgt end
+        if wFly_UIS:IsKeyDown(Enum.KeyCode.D) then hDir = hDir + flatRgt end
+        if wFly_UIS:IsKeyDown(Enum.KeyCode.Space)     then vY =  1 end
+        if wFly_UIS:IsKeyDown(Enum.KeyCode.LeftShift) then vY = -1 end
+    end
+    if hDir.Magnitude > 0.01 then hDir = hDir.Unit end
+    local vel = Vector3.new(hDir.X, vY, hDir.Z) * wFly_speed
+    pcall(function()
+        root.AssemblyLinearVelocity  = vel
+        root.AssemblyAngularVelocity = Vector3.zero
+    end)
+    if wFly_wbLV and wFly_wbLV.Parent then
+        wFly_wbLV.VectorVelocity = vel
+    end
+    if wFly_wbBase and wFly_wbBase.Parent then
+        pcall(function()
+            wFly_wbBase.AssemblyAngularVelocity = Vector3.zero
+            wFly_wbBase.AssemblyLinearVelocity  = vel
+        end)
+    end
+end)
+
+MakeSlider("Fly Speed", 10, 300, 60, 5, function(v) wFly_speed = v end)
+MakeToggle("Wheelbarrow Fly", false, function(state)
+    wFly_enabled = state
+    pcall(function()
+        if wFly_mobUpB  then wFly_mobUpB.Visible  = state end
+        if wFly_mobDnB  then wFly_mobDnB.Visible  = state end
+        if wFly_mobFwdB then wFly_mobFwdB.Visible = state end
+        if wFly_mobBwdB then wFly_mobBwdB.Visible = state end
+    end)
+    if state then
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                pcall(function()
+                    wFly_savedWS = hum.WalkSpeed
+                    wFly_savedJP = hum.JumpPower
+                end)
+            end
+            local found = wFly_findNearestWB(root, 8)
+            if found then wFly_attachWb(found) end
+        end
+    else
+        local char = LocalPlayer.Character
+        if char then
+            local hum  = char:FindFirstChildOfClass("Humanoid")
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if hum then
+                pcall(function()
+                    hum.WalkSpeed = wFly_savedWS
+                    hum.JumpPower = wFly_savedJP
+                end)
+            end
+            if root then
+                pcall(function() root.AssemblyAngularVelocity = Vector3.zero end)
+            end
+        end
+        wFly_cleanupWb()
+        wFly_wbTick = 0
+        wFly_thumbX, wFly_thumbY = 0, 0
+        wFly_mobUp, wFly_mobDown = false, false
+        wFly_mobFwd, wFly_mobBwd = false, false
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    if not wFly_enabled then return end
+    wFly_cleanupWb()
+    wFly_wbTick = 0
+    task.wait(0.3)
+    local hum = newChar:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function()
+            wFly_savedWS = hum.WalkSpeed
+            wFly_savedJP = hum.JumpPower
+        end)
+    end
+end)
+
+MakeSection("Movement")
+
+local wsValue    = 16
+local _WS_K      = 80
+local _WS_D      = 18
+local _wsTarget  = Vector3.zero
+local _wsCurr    = Vector3.zero
+local _wsSpring  = Vector3.zero
+local _wsLinVel  = nil
+local _wsLinAtt  = nil
+local _wsUsePrim = false
+
+local function getHum()
+    local c = LocalPlayer and LocalPlayer.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function getRoot()
+    local c = LocalPlayer and LocalPlayer.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function _ensureLinVel(root)
+    if _wsLinVel and _wsLinVel.Parent == root then return end
+    pcall(function()
+        if _wsLinAtt then _wsLinAtt:Destroy() end
+        if _wsLinVel then _wsLinVel:Destroy() end
+    end)
+    _wsLinAtt = Instance.new("Attachment")
+    _wsLinAtt.Name = "_wsA"
+    _wsLinAtt.Parent = root
+    _wsLinVel = Instance.new("LinearVelocity")
+    _wsLinVel.Name = "_wsLV"
+    _wsLinVel.Attachment0 = _wsLinAtt
+    _wsLinVel.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
+    _wsLinVel.PrimaryTangentAxis   = Vector3.new(1, 0, 0)
+    _wsLinVel.SecondaryTangentAxis = Vector3.new(0, 0, 1)
+    _wsLinVel.PlaneVelocity = Vector2.zero
+    _wsLinVel.MaxForce      = math.huge
+    _wsLinVel.RelativeTo    = Enum.ActuatorRelativeTo.World
+    _wsLinVel.Parent = root
+end
+
+local function _destroyLinVel()
+    pcall(function() if _wsLinAtt then _wsLinAtt:Destroy() end end)
+    pcall(function() if _wsLinVel then _wsLinVel:Destroy() end end)
+    _wsLinAtt = nil
+    _wsLinVel = nil
+end
+
+RunService.Heartbeat:Connect(function(dt)
+    local anyActive = wsValue ~= 16
+    if not anyActive then
+        if _wsUsePrim then
+            local h = getHum()
+            if h then pcall(function() h.WalkSpeed = 16 end) end
+            _destroyLinVel()
+        elseif _wsCurr.Magnitude > 0.05 or _wsSpring.Magnitude > 0.05 then
+            local dtC = math.clamp(dt, 0.008, 0.05)
+            local _f = -_wsCurr * _WS_K - _wsSpring * _WS_D
+            _wsSpring = _wsSpring + _f * dtC
+            _wsCurr   = _wsCurr   + _wsSpring * dtC
+            local root = getRoot()
+            if root then
+                pcall(function()
+                    if _wsLinVel and _wsLinVel.Parent then
+                        _wsLinVel.PlaneVelocity = Vector2.new(_wsCurr.X, _wsCurr.Z)
+                    else
+                        local v = root.AssemblyLinearVelocity
+                        root.AssemblyLinearVelocity = Vector3.new(_wsCurr.X, v.Y, _wsCurr.Z)
+                    end
+                end)
+            end
+        else
+            _wsCurr   = Vector3.zero
+            _wsSpring = Vector3.zero
+            _wsTarget = Vector3.zero
+            _destroyLinVel()
+        end
+        return
+    end
+
+    pcall(function()
+        local root = getRoot()
+        local hum  = getHum()
+        if not (hum and root) then return end
+
+        local activeSpeed = wsValue
+
+        if _wsUsePrim then
+            hum.WalkSpeed = activeSpeed
+            pcall(function() sethiddenproperty(hum, "WalkSpeed", 16) end)
+            _destroyLinVel()
+            _wsCurr   = Vector3.zero
+            _wsSpring = Vector3.zero
+            _wsTarget = Vector3.zero
+        else
+            hum.WalkSpeed = 16
+            if activeSpeed ~= 16 and hum.MoveDirection.Magnitude > 0.1 then
+                _wsTarget = Vector3.new(
+                    hum.MoveDirection.X, 0, hum.MoveDirection.Z
+                ).Unit * activeSpeed
+            else
+                _wsTarget = Vector3.zero
+            end
+            local dtC = math.clamp(dt, 0.008, 0.05)
+            local _f  = (_wsTarget - _wsCurr) * _WS_K - _wsSpring * _WS_D
+            _wsSpring = _wsSpring + _f * dtC
+            _wsCurr   = _wsCurr   + _wsSpring * dtC
+            if _wsTarget.Magnitude > 0.1 or _wsCurr.Magnitude > 0.3 then
+                pcall(function()
+                    _ensureLinVel(root)
+                    _wsLinVel.PlaneVelocity = Vector2.new(_wsCurr.X, _wsCurr.Z)
+                end)
+            else
+                _destroyLinVel()
+            end
+            local animator = hum:FindFirstChildOfClass("Animator")
+            if animator then
+                local targetAnimSpd = (activeSpeed == 16) and 1.0
+                    or math.clamp(activeSpeed / 16, 0.4, 2.5)
+                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                    pcall(function()
+                        if math.abs(track.Speed - targetAnimSpd) > 0.03 then
+                            track:AdjustSpeed(targetAnimSpd)
+                        end
+                    end)
+                end
+            end
+        end
+    end)
+end)
+
+MakeSlider("Walk Speed", 1, 300, 16, 1, function(v) wsValue = v end)
+
+MakeSection("WalkFling")
+
+local _wfActive      = false
+local _wfNoclipConn  = nil
+local _wfLoopThread  = nil
+local _wfNoclipNames = { HumanoidRootPart = true, Torso = true, UpperTorso = true, LowerTorso = true, Head = true }
+
+local function _wfStartNoclip()
+    if _wfNoclipConn then return end
+    _wfNoclipConn = RunService.Stepped:Connect(function()
+        if not _wfActive then return end
+        local ch = LocalPlayer and LocalPlayer.Character
+        if not ch then return end
+        for _, v in pairs(ch:GetDescendants()) do
+            if v:IsA("BasePart") and _wfNoclipNames[v.Name] then
+                v.CanCollide = false
+            end
+        end
+    end)
+end
+
+local function _wfStopNoclip()
+    if _wfNoclipConn then
+        _wfNoclipConn:Disconnect()
+        _wfNoclipConn = nil
+    end
+    local ch = LocalPlayer and LocalPlayer.Character
+    if ch then
+        for _, v in pairs(ch:GetDescendants()) do
+            if v:IsA("BasePart") and _wfNoclipNames[v.Name] then
+                v.CanCollide = true
+            end
+        end
+    end
+end
+
+local function _wfLoop()
+    local movel = 0.1
+    repeat
+        RunService.Heartbeat:Wait()
+        local ch   = LocalPlayer and LocalPlayer.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+
+        while not (ch and ch.Parent and root and root.Parent) do
+            RunService.Heartbeat:Wait()
+            ch   = LocalPlayer and LocalPlayer.Character
+            root = ch and ch:FindFirstChild("HumanoidRootPart")
+        end
+
+        local vel = root.AssemblyLinearVelocity
+        root.AssemblyLinearVelocity = vel * 999999999999999999999 + Vector3.new(0, 999999999999999999999, 0)
+
+        RunService.RenderStepped:Wait()
+        if ch and ch.Parent and root and root.Parent then
+            root.AssemblyLinearVelocity = vel
+        end
+
+        RunService.Stepped:Wait()
+        if ch and ch.Parent and root and root.Parent then
+            root.AssemblyLinearVelocity = vel + Vector3.new(0, movel, 0)
+            movel = movel * -1
+        end
+    until not _wfActive
+end
+
+MakeToggle("WalkFling", false, function(state)
+    _wfActive = state
+    if state then
+        local ch  = LocalPlayer and LocalPlayer.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.Died:Connect(function()
+                _wfActive = false
+                _wfStopNoclip()
+            end)
+        end
+        _wfStartNoclip()
+        _wfLoopThread = task.spawn(_wfLoop)
+    else
+        _wfStopNoclip()
+    end
+end)
