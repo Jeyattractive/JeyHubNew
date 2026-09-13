@@ -517,13 +517,6 @@ closeBtn.MouseButton1Click:Connect(function()
     task.delay(0.16, function() screenGui:Destroy() end)
 end)
 
--- ============================================================
--- PRIORITAS: WalkFling, Auto Sit, Auto Turun
--- ============================================================
-
--- Shared flag: true while Auto Sit/Turun cycle is mid-execution.
--- WalkFling reads this to pause its huge-velocity burst so the
--- character doesn't nbus through the floor right at weld-break.
 local wAS_inSitCycle = false
 
 MakeSection("Forest Fling")
@@ -554,8 +547,6 @@ MakeButton("Run Server (WM_Req)", function()
     end)
 end)
 
-
-
 MakeSection("WalkFling")
 
 local _wfActive      = false
@@ -567,8 +558,6 @@ local function _wfStartNoclip()
     if _wfNoclipConn then return end
     _wfNoclipConn = RunService.Stepped:Connect(function()
         if not _wfActive then return end
-        -- Pause noclip during sit-turun cycle so the character
-        -- can land on the ground after getting up instead of phasing through it
         if wAS_inSitCycle then return end
         local ch = LocalPlayer and LocalPlayer.Character
         if not ch then return end
@@ -608,8 +597,6 @@ local function _wfLoop()
             root = ch and ch:FindFirstChild("HumanoidRootPart")
         end
 
-        -- Skip the fling burst while Auto Sit/Turun is mid-cycle.
-        -- Applying vel * 999... right at weld-break sends the character through the floor.
         if not wAS_inSitCycle then
             local vel = root.AssemblyLinearVelocity
             root.AssemblyLinearVelocity = vel * 999999999999999999999 + Vector3.new(0, 999999999999999999999, 0)
@@ -625,7 +612,6 @@ local function _wfLoop()
                 movel = movel * -1
             end
         else
-            -- Still advance the loop timing so it doesn't pile up frames
             RunService.Stepped:Wait()
         end
     until not _wfActive
@@ -661,15 +647,13 @@ local wAS_autoTurun    = false
 local wAS_turunDelay   = 0.00001
 local wAS_sitStartTick = 0
 local wAS_sitTracked   = false
-local wAS_lastWB       = nil
--- FIX: track who was pushing at sit-time so we can fling them on turun
-local wAS_trackedPusher = nil
--- FIX: debounce — require N consecutive heartbeat frames where pusher is stable
--- before calling Seat:Sit(). Prevents transient cart-touch from triggering a cycle.
-local wAS_sitDebounce  = 0
-local wAS_SIT_STABLE   = 10  -- frames needed before Sit() fires
+local wAS_cartCooldowns = {}
+local WAS_CART_CD_TTL   = 2
 
--- Returns total BasePart mass of a character model (used for mass comparison)
+local wAS_trackedPusher = nil
+local wAS_sitDebounce  = 0
+local wAS_SIT_STABLE   = 10
+
 local function wAS_getCharMass(char)
     if not char then return 0 end
     local total = 0
@@ -802,7 +786,9 @@ local function wAS_findNearestWB(root, maxDist)
                 if lname:match(pat) then isVehicle = true; break end
             end
             if isVehicle then
-                if obj == wAS_lastWB then
+                local leftAt = wAS_cartCooldowns[obj]
+                local onCooldown = leftAt and (tick() - leftAt < WAS_CART_CD_TTL)
+                if onCooldown then
                 elseif wAS_isSeatFree(obj, myHum) then
                     local pusherBlocking = false
                     pcall(function()
@@ -813,23 +799,17 @@ local function wAS_findNearestWB(root, maxDist)
                                 pusherBlocking = true
                                 return
                             end
-                            local pusherSeated = ph.SeatPart ~= nil
-                            if not pusherSeated then
-                                local stOk, st = pcall(function() return ph:GetState() end)
-                                pusherSeated = stOk and (st == Enum.HumanoidStateType.Seated)
+
+                            if ph.Sit then
+                                pusherBlocking = true
+                                return
                             end
-                            pusherBlocking = pusherSeated
-                            -- FIX: Mass check.
-                            -- If the cart seat is empty (gerobak kosong) and my avatar
-                            -- is lighter than the pusher, skip this cart — sitting on it
-                            -- won't produce an effective fling since I'm the lighter one.
-                            if not pusherBlocking then
-                                local myChar2   = LocalPlayer.Character
-                                local myMass    = wAS_getCharMass(myChar2)
-                                local pusherMass = wAS_getCharMass(ph.Parent)
-                                if myMass < pusherMass then
-                                    pusherBlocking = true
-                                end
+
+                            local myChar2    = LocalPlayer.Character
+                            local myMass     = wAS_getCharMass(myChar2)
+                            local pusherMass = wAS_getCharMass(ph.Parent)
+                            if myMass < pusherMass then
+                                pusherBlocking = true
                             end
                         end
                     end)
@@ -891,16 +871,12 @@ RunService.Heartbeat:Connect(function()
     if wAS_wbSeat and wAS_wbSeat.Parent then
         pcall(function()
             if hum.SeatPart == wAS_wbSeat then
-                -- Successfully seated on the target cart
                 if not hum.Sit then hum.Sit = true end
 
-                -- FIX: Record the pusher the first frame we confirm seated.
-                -- Used later for the fling burst on auto-turun.
                 if not wAS_sitTracked and wAS_trackedPusher == nil then
                     wAS_trackedPusher = wAS_wbModel and wAS_findPusher(wAS_wbModel)
                 end
 
-                -- Reset sit debounce once we're actually seated
                 wAS_sitDebounce = 0
 
                 if wAS_autoTurun then
@@ -909,18 +885,15 @@ RunService.Heartbeat:Connect(function()
                         wAS_sitTracked   = true
                     else
                         if tick() - wAS_sitStartTick >= wAS_turunDelay then
-                            -- === AUTO TURUN ===
-                            if wAS_wbModel then wAS_lastWB = wAS_wbModel end
+                            if wAS_wbModel then
+                                wAS_cartCooldowns[wAS_wbModel] = tick()
+                            end
 
-                            -- Snapshot state before cleanup clears it
                             local pusherCharRef = wAS_trackedPusher
-                            local capturedChar  = char  -- capture for spawned task
+                            local capturedChar  = char
 
-                            -- Engage sit-cycle guard so WalkFling pauses its
-                            -- huge-velocity burst and noclip; prevents nbus on get-up
                             wAS_inSitCycle = true
 
-                            -- Re-enable collision on own parts so we land on ground
                             if _wfActive then
                                 for _, v2 in pairs(char:GetDescendants()) do
                                     if v2:IsA("BasePart") and _wfNoclipNames[v2.Name] then
@@ -929,9 +902,6 @@ RunService.Heartbeat:Connect(function()
                                 end
                             end
 
-                            -- FIX: Make pusher super-light via WM_Req so even a
-                            -- small fling force sends them flying.
-                            -- Restores to normal density after 3 seconds.
                             local rem = RS:FindFirstChild("WM_Req")
                             if rem and pusherCharRef and pusherCharRef.Parent then
                                 pcall(function() rem:FireServer(pusherCharRef, 0.0001) end)
@@ -943,16 +913,11 @@ RunService.Heartbeat:Connect(function()
                                 end)
                             end
 
-                            -- Break the seat weld
                             hum.Sit = false
                             pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
 
-                            -- FIX: Fling burst fires one Heartbeat after weld breaks.
-                            -- At that exact frame the weld is gone so the velocity
-                            -- transfers to the environment (including the pusher's cart).
-                            -- This is the "pusher langsung mental" trigger.
                             task.spawn(function()
-                                RunService.Heartbeat:Wait()  -- wait for weld to fully release
+                                RunService.Heartbeat:Wait()
                                 local r2 = capturedChar and capturedChar:FindFirstChild("HumanoidRootPart")
                                 if r2 and r2.Parent then
                                     local v2 = r2.AssemblyLinearVelocity
@@ -963,7 +928,6 @@ RunService.Heartbeat:Connect(function()
                                         r2.AssemblyLinearVelocity = v2
                                     end
                                 end
-                                -- Release the sit-cycle guard after a short settle time
                                 task.wait(0.45)
                                 wAS_inSitCycle = false
                             end)
@@ -974,11 +938,6 @@ RunService.Heartbeat:Connect(function()
                 end
 
             elseif not hum.SeatPart then
-                -- Not yet seated — increment stability counter.
-                -- FIX: Only call Seat:Sit() after wAS_SIT_STABLE consecutive
-                -- heartbeat frames. This filters out transient cart-touches
-                -- (someone holds gerobak for a split second) that previously
-                -- caused immediate sit + turun + nbus loops.
                 wAS_sitTracked    = false
                 wAS_trackedPusher = nil
                 wAS_sitDebounce   = wAS_sitDebounce + 1
@@ -997,16 +956,16 @@ LocalPlayer.CharacterAdded:Connect(function()
     wAS_wbTick        = 0
     wAS_sitStartTick  = 0
     wAS_sitTracked    = false
-    wAS_lastWB        = nil
+    wAS_cartCooldowns = {}
     wAS_trackedPusher = nil
     wAS_sitDebounce   = 0
-    wAS_inSitCycle    = false  -- clear any stuck cycle guard on respawn
+    wAS_inSitCycle    = false
 end)
 
 MakeToggle("Auto Sit", false, function(state)
     wAS_enabled = state
     if state then
-        wAS_lastWB = nil
+        wAS_cartCooldowns = {}
         local char = LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
@@ -1021,10 +980,10 @@ MakeToggle("Auto Sit", false, function(state)
     end
 end)
 MakeToggle("Auto Turun", false, function(state)
-    wAS_autoTurun    = state
-    wAS_sitStartTick = 0
-    wAS_sitTracked   = false
-    wAS_lastWB       = nil
+    wAS_autoTurun     = state
+    wAS_sitStartTick  = 0
+    wAS_sitTracked    = false
+    wAS_cartCooldowns = {}
 end)
 
 MakeSection("Movement")
@@ -1167,7 +1126,7 @@ local exclLabel = Instance.new("TextLabel")
 exclLabel.Size = UDim2.new(1, 0, 0, 12)
 exclLabel.BackgroundTransparency = 1
 exclLabel.Font = Enum.Font.Gotham
-exclLabel.Text = "Exclude Player (klik nama):"
+exclLabel.Text = "Exclude Player (punya gerobak):"
 exclLabel.TextColor3 = SUB
 exclLabel.TextSize = 9
 exclLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -1196,7 +1155,50 @@ exclList.SortOrder = Enum.SortOrder.LayoutOrder
 exclList.Padding = UDim.new(0, 3)
 exclList.Parent = exclScroll
 
+local GEROBAK_TOOL_PATTERNS = {
+    "gerobak", "wheel.*barrow", "wheelbarrow", "^cart$", "carriage", "vehicle",
+}
+
+local function isGerobakToolName(name)
+    local lname = name:lower()
+    for _, pat in ipairs(GEROBAK_TOOL_PATTERNS) do
+        if lname:match(pat) then return true end
+    end
+    return false
+end
+
+local function playerHasGerobakTool(plr)
+    local char = plr.Character
+    if char then
+        local held = char:FindFirstChildOfClass("Tool")
+        if held and isGerobakToolName(held.Name) then
+            return true
+        end
+    end
+    local bp = plr:FindFirstChild("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") and isGerobakToolName(t.Name) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local exclRows = {}
+
+local function removeExclRow(plrName)
+    local existing = exclRows[plrName]
+    if existing then
+        pcall(function() existing:Destroy() end)
+        exclRows[plrName] = nil
+    end
+end
+
 local function buildExclRow(plr)
+    if exclRows[plr.Name] then return end
+
     local row = Instance.new("TextButton")
     row.Size = UDim2.new(1, 0, 0, 22)
     row.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
@@ -1210,6 +1212,8 @@ local function buildExclRow(plr)
     row.AutoButtonColor = false
     row.Parent = exclScroll
     corner(row, 4)
+
+    exclRows[plr.Name] = row
 
     local function applyState()
         if wAS_excludedPlayers[plr.Name] then
@@ -1232,19 +1236,47 @@ local function buildExclRow(plr)
     end)
 end
 
-for _, plr in ipairs(Players:GetPlayers()) do
-    if plr ~= LocalPlayer then buildExclRow(plr) end
+local function refreshExclList()
+    for plrName, _ in pairs(exclRows) do
+        local plr = Players:FindFirstChild(plrName)
+        if not plr or not playerHasGerobakTool(plr) then
+            removeExclRow(plrName)
+        end
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and playerHasGerobakTool(plr) then
+            buildExclRow(plr)
+        end
+    end
 end
-Players.PlayerAdded:Connect(function(plr)
-    if plr ~= LocalPlayer then buildExclRow(plr) end
-end)
-Players.PlayerRemoving:Connect(function(plr)
-    wAS_excludedPlayers[plr.Name] = nil
+
+refreshExclList()
+
+task.spawn(function()
+    while screenGui and screenGui.Parent do
+        task.wait(2)
+        pcall(refreshExclList)
+    end
 end)
 
--- ============================================================
--- FITUR LAINNYA
--- ============================================================
+Players.PlayerAdded:Connect(function(plr)
+    if plr ~= LocalPlayer then
+        task.delay(1.5, function()
+            if plr and plr.Parent then
+                pcall(function()
+                    if playerHasGerobakTool(plr) then
+                        buildExclRow(plr)
+                    end
+                end)
+            end
+        end)
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(plr)
+    wAS_excludedPlayers[plr.Name] = nil
+    removeExclRow(plr.Name)
+end)
 
 MakeSection("Light")
 
@@ -1363,7 +1395,6 @@ RunService.Heartbeat:Connect(function()
     wLite_lastSit = sitting
     wLite_lastPax = passenger
 end)
-
 
 MakeSection("Wheelbarrow Fly")
 
