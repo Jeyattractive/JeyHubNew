@@ -517,6 +517,15 @@ closeBtn.MouseButton1Click:Connect(function()
     task.delay(0.16, function() screenGui:Destroy() end)
 end)
 
+-- ============================================================
+-- PRIORITAS: WalkFling, Auto Sit, Auto Turun
+-- ============================================================
+
+-- Shared flag: true while Auto Sit/Turun cycle is mid-execution.
+-- WalkFling reads this to pause its huge-velocity burst so the
+-- character doesn't nbus through the floor right at weld-break.
+local wAS_inSitCycle = false
+
 MakeSection("Forest Fling")
 
 MakeButton("Run Server (WM_Req)", function()
@@ -545,275 +554,132 @@ MakeButton("Run Server (WM_Req)", function()
     end)
 end)
 
-MakeSection("Brutal")
 
-local wBrut_HEAVY  = 150
-local wBrut_LIGHT  = 0.001
-local wBrut_NORMAL = 0.7
-local wBrut_FORCE  = 999999999999999999
-local wBrut_enabled = false
-local wBrut_force   = nil
-local wBrut_lastSit = false
-local wBrut_lastPax = nil
 
-local function wBrut_getRemote() return RS:FindFirstChild("WM_Req") end
-local function wBrut_removeForce()
-    if wBrut_force and wBrut_force.Parent then wBrut_force:Destroy() end
-    wBrut_force = nil
+MakeSection("WalkFling")
+
+local _wfActive      = false
+local _wfNoclipConn  = nil
+local _wfLoopThread  = nil
+local _wfNoclipNames = { HumanoidRootPart = true, Torso = true, UpperTorso = true, LowerTorso = true, Head = true }
+
+local function _wfStartNoclip()
+    if _wfNoclipConn then return end
+    _wfNoclipConn = RunService.Stepped:Connect(function()
+        if not _wfActive then return end
+        -- Pause noclip during sit-turun cycle so the character
+        -- can land on the ground after getting up instead of phasing through it
+        if wAS_inSitCycle then return end
+        local ch = LocalPlayer and LocalPlayer.Character
+        if not ch then return end
+        for _, v in pairs(ch:GetDescendants()) do
+            if v:IsA("BasePart") and _wfNoclipNames[v.Name] then
+                v.CanCollide = false
+            end
+        end
+    end)
 end
-local function wBrut_applyForce(char)
-    wBrut_removeForce()
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local bf = Instance.new("BodyForce")
-    bf.Force  = Vector3.new(0, wBrut_FORCE, 0)
-    bf.Parent = root
-    wBrut_force = bf
-end
-local function wBrut_fire(target, density)
-    local rem = wBrut_getRemote()
-    if rem then rem:FireServer(target, density) end
-end
-local function wBrut_resetAll()
-    local char = LocalPlayer.Character
-    if char then wBrut_fire(char, wBrut_NORMAL) end
-    if wBrut_lastPax then wBrut_fire(wBrut_lastPax, wBrut_NORMAL) end
-    wBrut_removeForce()
-    wBrut_lastSit = false
-    wBrut_lastPax = nil
-end
-local function wBrut_isSitting(char)
-    if not char then return false end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum and hum:GetState() == Enum.HumanoidStateType.Seated then return true end
-    if hum and hum.SeatPart ~= nil then return true end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if root then
-        for _, w in ipairs(root:GetChildren()) do
-            if w:IsA("Weld") or w:IsA("WeldConstraint") or w:IsA("Motor6D") then
-                local op = (w.Part0 ~= root) and w.Part0 or w.Part1
-                if op and op.Parent ~= char then return true end
+
+local function _wfStopNoclip()
+    if _wfNoclipConn then
+        _wfNoclipConn:Disconnect()
+        _wfNoclipConn = nil
+    end
+    local ch = LocalPlayer and LocalPlayer.Character
+    if ch then
+        for _, v in pairs(ch:GetDescendants()) do
+            if v:IsA("BasePart") and _wfNoclipNames[v.Name] then
+                v.CanCollide = true
             end
         end
     end
-    return false
 end
-local function wBrut_getPax()
-    local char = LocalPlayer.Character
-    if not char then return nil end
-    for _, part in ipairs(workspace:GetDescendants()) do
-        if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
-            local oc = part.Occupant.Parent
-            if oc ~= char and Players:GetPlayerFromCharacter(oc) then return oc end
+
+local function _wfLoop()
+    local movel = 0.1
+    repeat
+        RunService.Heartbeat:Wait()
+        local ch   = LocalPlayer and LocalPlayer.Character
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+
+        while not (ch and ch.Parent and root and root.Parent) do
+            RunService.Heartbeat:Wait()
+            ch   = LocalPlayer and LocalPlayer.Character
+            root = ch and ch:FindFirstChild("HumanoidRootPart")
         end
-    end
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") or tool:IsA("Model") then
-            for _, part in ipairs(tool:GetDescendants()) do
-                if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
-                    local oc = part.Occupant.Parent
-                    if oc ~= char then return oc end
-                end
+
+        -- Skip the fling burst while Auto Sit/Turun is mid-cycle.
+        -- Applying vel * 999... right at weld-break sends the character through the floor.
+        if not wAS_inSitCycle then
+            local vel = root.AssemblyLinearVelocity
+            root.AssemblyLinearVelocity = vel * 999999999999999999999 + Vector3.new(0, 999999999999999999999, 0)
+
+            RunService.RenderStepped:Wait()
+            if ch and ch.Parent and root and root.Parent then
+                root.AssemblyLinearVelocity = vel
             end
-        end
-    end
-    return nil
-end
 
-RunService.Heartbeat:Connect(function()
-    if not wBrut_enabled then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local sitting   = wBrut_isSitting(char)
-    local passenger = wBrut_getPax()
-    if sitting then
-        if not wBrut_lastSit then
-            wBrut_fire(char, wBrut_LIGHT)
-            wBrut_applyForce(char)
-        end
-    else
-        if wBrut_lastSit then
-            wBrut_fire(char, wBrut_NORMAL)
-            wBrut_removeForce()
-        end
-        if passenger ~= wBrut_lastPax then
-            if wBrut_lastPax then wBrut_fire(wBrut_lastPax, wBrut_NORMAL) end
-            if passenger    then wBrut_fire(passenger, wBrut_HEAVY) end
-        end
-    end
-    wBrut_lastSit = sitting
-    wBrut_lastPax = passenger
-end)
-
-LocalPlayer.CharacterAdded:Connect(function()
-    wBrut_lastSit = false
-    wBrut_lastPax = nil
-    wBrut_force   = nil
-end)
-
-MakeToggle("Brutal", false, function(state)
-    wBrut_enabled = state
-    if not state then
-        wBrut_resetAll()
-    else
-        wBrut_lastSit = false
-        wBrut_lastPax = nil
-    end
-end)
-
-MakeSection("Light")
-
-local wLite_HEAVY  = 150
-local wLite_LIGHT  = 0.001
-local wLite_NORMAL = 0.7
-local wLite_modeA     = false
-local wLite_modeB     = false
-local wLite_force     = nil
-local wLite_lastSit   = false
-local wLite_lastPax   = nil
-local wLite_lastScan  = 0
-local wLite_cachedPax = nil
-local wLite_SCAN_GAP  = 0.3
-
-local function wLite_getRemote() return RS:FindFirstChild("WM_Req") end
-local function wLite_removeForce()
-    if wLite_force and wLite_force.Parent then wLite_force:Destroy() end
-    wLite_force = nil
-end
-local function wLite_applyForce(char, forceY)
-    wLite_removeForce()
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local bf = Instance.new("BodyForce")
-    bf.Force  = Vector3.new(0, forceY, 0)
-    bf.Parent = root
-    wLite_force = bf
-end
-local function wLite_fire(target, density)
-    local rem = wLite_getRemote()
-    if rem then rem:FireServer(target, density) end
-end
-local function wLite_isSitting()
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return false end
-    return hum:GetState() == Enum.HumanoidStateType.Seated
-end
-local function wLite_scanPax()
-    local char = LocalPlayer.Character
-    if not char then return nil end
-    for _, part in ipairs(workspace:GetDescendants()) do
-        if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
-            local oc = part.Occupant.Parent
-            if oc ~= char and Players:GetPlayerFromCharacter(oc) then return oc end
-        end
-    end
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") or tool:IsA("Model") then
-            for _, part in ipairs(tool:GetDescendants()) do
-                if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
-                    local oc = part.Occupant.Parent
-                    if oc ~= char then return oc end
-                end
-            end
-        end
-    end
-    return nil
-end
-local function wLite_resetAll()
-    local char = LocalPlayer.Character
-    if char then wLite_fire(char, wLite_NORMAL) end
-    if wLite_lastPax then wLite_fire(wLite_lastPax, wLite_NORMAL) end
-    wLite_removeForce()
-    wLite_lastSit   = false
-    wLite_lastPax   = nil
-    wLite_cachedPax = nil
-end
-
-RunService.Heartbeat:Connect(function()
-    if not wLite_modeA and not wLite_modeB then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local sitting = wLite_isSitting()
-    local now = tick()
-    if now - wLite_lastScan >= wLite_SCAN_GAP then
-        wLite_cachedPax = wLite_scanPax()
-        wLite_lastScan  = now
-    end
-    local passenger = wLite_cachedPax
-    if wLite_modeA then
-        if sitting then
-            if not wLite_lastSit then
-                wLite_fire(char, wLite_HEAVY)
-                wLite_applyForce(char, -workspace.Gravity * 80)
+            RunService.Stepped:Wait()
+            if ch and ch.Parent and root and root.Parent then
+                root.AssemblyLinearVelocity = vel + Vector3.new(0, movel, 0)
+                movel = movel * -1
             end
         else
-            if wLite_lastSit then
-                wLite_fire(char, wLite_NORMAL)
-                wLite_removeForce()
-            end
-            if passenger ~= wLite_lastPax then
-                if wLite_lastPax then wLite_fire(wLite_lastPax, wLite_NORMAL) end
-                if passenger    then wLite_fire(passenger, wLite_LIGHT) end
-            end
+            -- Still advance the loop timing so it doesn't pile up frames
+            RunService.Stepped:Wait()
         end
-    elseif wLite_modeB then
-        if sitting then
-            if not wLite_lastSit then
-                wLite_fire(char, wLite_LIGHT)
-                wLite_applyForce(char, workspace.Gravity * 80)
-            end
-        else
-            if wLite_lastSit then
-                wLite_fire(char, wLite_NORMAL)
-                wLite_removeForce()
-            end
-            if passenger ~= wLite_lastPax then
-                if wLite_lastPax then wLite_fire(wLite_lastPax, wLite_NORMAL) end
-                if passenger    then wLite_fire(passenger, wLite_HEAVY) end
-            end
-        end
-    end
-    wLite_lastSit = sitting
-    wLite_lastPax = passenger
-end)
+    until not _wfActive
+end
 
-local wLiteTogA, wLiteTogB
-wLiteTogA = MakeToggle("Mode A", false, function(state)
-    wLite_modeA = state
+MakeToggle("WalkFling", false, function(state)
+    _wfActive = state
     if state then
-        wLite_modeB = false
-        if wLiteTogB then wLiteTogB.Set(false, true) end
-        wLite_resetAll()
+        local ch  = LocalPlayer and LocalPlayer.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.Died:Connect(function()
+                _wfActive = false
+                _wfStopNoclip()
+            end)
+        end
+        _wfStartNoclip()
+        _wfLoopThread = task.spawn(_wfLoop)
     else
-        wLite_resetAll()
-    end
-end)
-wLiteTogB = MakeToggle("Mode B", false, function(state)
-    wLite_modeB = state
-    if state then
-        wLite_modeA = false
-        if wLiteTogA then wLiteTogA.Set(false, true) end
-        wLite_resetAll()
-    else
-        wLite_resetAll()
+        _wfStopNoclip()
     end
 end)
 
 MakeSection("Auto Sit")
 
 local wAS_excludedPlayers = {}
-local wAS_enabled   = false
-local wAS_wbModel   = nil
-local wAS_wbSeat    = nil
-local wAS_wbTick    = 0
-local wAS_maxDist   = 30
+local wAS_enabled      = false
+local wAS_wbModel      = nil
+local wAS_wbSeat       = nil
+local wAS_wbTick       = 0
+local wAS_maxDist      = 10000
 local wAS_autoTurun    = false
-local wAS_turunDelay   = 0.05
+local wAS_turunDelay   = 0.00001
 local wAS_sitStartTick = 0
 local wAS_sitTracked   = false
 local wAS_lastWB       = nil
+-- FIX: track who was pushing at sit-time so we can fling them on turun
+local wAS_trackedPusher = nil
+-- FIX: debounce — require N consecutive heartbeat frames where pusher is stable
+-- before calling Seat:Sit(). Prevents transient cart-touch from triggering a cycle.
+local wAS_sitDebounce  = 0
+local wAS_SIT_STABLE   = 10  -- frames needed before Sit() fires
+
+-- Returns total BasePart mass of a character model (used for mass comparison)
+local function wAS_getCharMass(char)
+    if not char then return 0 end
+    local total = 0
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then
+            pcall(function() total = total + p:GetMass() end)
+        end
+    end
+    return total
+end
 
 local function wAS_isSeatFree(wbModel, myHum)
     for _, p in ipairs(wbModel:GetDescendants()) do
@@ -953,6 +819,18 @@ local function wAS_findNearestWB(root, maxDist)
                                 pusherSeated = stOk and (st == Enum.HumanoidStateType.Seated)
                             end
                             pusherBlocking = pusherSeated
+                            -- FIX: Mass check.
+                            -- If the cart seat is empty (gerobak kosong) and my avatar
+                            -- is lighter than the pusher, skip this cart — sitting on it
+                            -- won't produce an effective fling since I'm the lighter one.
+                            if not pusherBlocking then
+                                local myChar2   = LocalPlayer.Character
+                                local myMass    = wAS_getCharMass(myChar2)
+                                local pusherMass = wAS_getCharMass(ph.Parent)
+                                if myMass < pusherMass then
+                                    pusherBlocking = true
+                                end
+                            end
                         end
                     end)
                     if not pusherBlocking then
@@ -983,11 +861,13 @@ local function wAS_getSeat(wbModel)
 end
 
 local function wAS_cleanup()
-    wAS_wbModel      = nil
-    wAS_wbSeat       = nil
-    wAS_wbTick       = 0
-    wAS_sitStartTick = 0
-    wAS_sitTracked   = false
+    wAS_wbModel       = nil
+    wAS_wbSeat        = nil
+    wAS_wbTick        = 0
+    wAS_sitStartTick  = 0
+    wAS_sitTracked    = false
+    wAS_trackedPusher = nil
+    wAS_sitDebounce   = 0
 end
 
 RunService.Heartbeat:Connect(function()
@@ -1011,38 +891,118 @@ RunService.Heartbeat:Connect(function()
     if wAS_wbSeat and wAS_wbSeat.Parent then
         pcall(function()
             if hum.SeatPart == wAS_wbSeat then
+                -- Successfully seated on the target cart
                 if not hum.Sit then hum.Sit = true end
+
+                -- FIX: Record the pusher the first frame we confirm seated.
+                -- Used later for the fling burst on auto-turun.
+                if not wAS_sitTracked and wAS_trackedPusher == nil then
+                    wAS_trackedPusher = wAS_wbModel and wAS_findPusher(wAS_wbModel)
+                end
+
+                -- Reset sit debounce once we're actually seated
+                wAS_sitDebounce = 0
+
                 if wAS_autoTurun then
                     if not wAS_sitTracked then
                         wAS_sitStartTick = tick()
                         wAS_sitTracked   = true
                     else
                         if tick() - wAS_sitStartTick >= wAS_turunDelay then
+                            -- === AUTO TURUN ===
                             if wAS_wbModel then wAS_lastWB = wAS_wbModel end
+
+                            -- Snapshot state before cleanup clears it
+                            local pusherCharRef = wAS_trackedPusher
+                            local capturedChar  = char  -- capture for spawned task
+
+                            -- Engage sit-cycle guard so WalkFling pauses its
+                            -- huge-velocity burst and noclip; prevents nbus on get-up
+                            wAS_inSitCycle = true
+
+                            -- Re-enable collision on own parts so we land on ground
+                            if _wfActive then
+                                for _, v2 in pairs(char:GetDescendants()) do
+                                    if v2:IsA("BasePart") and _wfNoclipNames[v2.Name] then
+                                        pcall(function() v2.CanCollide = true end)
+                                    end
+                                end
+                            end
+
+                            -- FIX: Make pusher super-light via WM_Req so even a
+                            -- small fling force sends them flying.
+                            -- Restores to normal density after 3 seconds.
+                            local rem = RS:FindFirstChild("WM_Req")
+                            if rem and pusherCharRef and pusherCharRef.Parent then
+                                pcall(function() rem:FireServer(pusherCharRef, 0.0001) end)
+                                task.delay(3, function()
+                                    if rem and rem.Parent and
+                                       pusherCharRef and pusherCharRef.Parent then
+                                        pcall(function() rem:FireServer(pusherCharRef, 0.7) end)
+                                    end
+                                end)
+                            end
+
+                            -- Break the seat weld
                             hum.Sit = false
                             pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+
+                            -- FIX: Fling burst fires one Heartbeat after weld breaks.
+                            -- At that exact frame the weld is gone so the velocity
+                            -- transfers to the environment (including the pusher's cart).
+                            -- This is the "pusher langsung mental" trigger.
+                            task.spawn(function()
+                                RunService.Heartbeat:Wait()  -- wait for weld to fully release
+                                local r2 = capturedChar and capturedChar:FindFirstChild("HumanoidRootPart")
+                                if r2 and r2.Parent then
+                                    local v2 = r2.AssemblyLinearVelocity
+                                    r2.AssemblyLinearVelocity = v2 * 999999999999999999999
+                                        + Vector3.new(0, 999999999999999999999, 0)
+                                    RunService.RenderStepped:Wait()
+                                    if r2 and r2.Parent then
+                                        r2.AssemblyLinearVelocity = v2
+                                    end
+                                end
+                                -- Release the sit-cycle guard after a short settle time
+                                task.wait(0.45)
+                                wAS_inSitCycle = false
+                            end)
+
                             wAS_cleanup()
                         end
                     end
                 end
+
             elseif not hum.SeatPart then
-                wAS_sitTracked = false
-                wAS_wbSeat:Sit(hum)
+                -- Not yet seated — increment stability counter.
+                -- FIX: Only call Seat:Sit() after wAS_SIT_STABLE consecutive
+                -- heartbeat frames. This filters out transient cart-touches
+                -- (someone holds gerobak for a split second) that previously
+                -- caused immediate sit + turun + nbus loops.
+                wAS_sitTracked    = false
+                wAS_trackedPusher = nil
+                wAS_sitDebounce   = wAS_sitDebounce + 1
+                if wAS_sitDebounce >= wAS_SIT_STABLE then
+                    wAS_sitDebounce = 0
+                    wAS_wbSeat:Sit(hum)
+                end
             end
         end)
     end
 end)
 
 LocalPlayer.CharacterAdded:Connect(function()
-    wAS_wbModel      = nil
-    wAS_wbSeat       = nil
-    wAS_wbTick       = 0
-    wAS_sitStartTick = 0
-    wAS_sitTracked   = false
-    wAS_lastWB       = nil
+    wAS_wbModel       = nil
+    wAS_wbSeat        = nil
+    wAS_wbTick        = 0
+    wAS_sitStartTick  = 0
+    wAS_sitTracked    = false
+    wAS_lastWB        = nil
+    wAS_trackedPusher = nil
+    wAS_sitDebounce   = 0
+    wAS_inSitCycle    = false  -- clear any stuck cycle guard on respawn
 end)
 
-MakeSlider("Radius Scan", 5, 100, 30, 5, function(v) wAS_maxDist = v end)
 MakeToggle("Auto Sit", false, function(state)
     wAS_enabled = state
     if state then
@@ -1060,12 +1020,147 @@ MakeToggle("Auto Sit", false, function(state)
         wAS_cleanup()
     end
 end)
-MakeSlider("Durasi Duduk (Auto Turun)", 0.001, 0.5, 0.05, 0.001, function(v) wAS_turunDelay = v end)
 MakeToggle("Auto Turun", false, function(state)
     wAS_autoTurun    = state
     wAS_sitStartTick = 0
     wAS_sitTracked   = false
     wAS_lastWB       = nil
+end)
+
+MakeSection("Movement")
+
+local wsValue    = 16
+local _WS_K      = 80
+local _WS_D      = 18
+local _wsTarget  = Vector3.zero
+local _wsCurr    = Vector3.zero
+local _wsSpring  = Vector3.zero
+local _wsLinVel  = nil
+local _wsLinAtt  = nil
+local _wsUsePrim = false
+
+local function getHum()
+    local c = LocalPlayer and LocalPlayer.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function getRoot()
+    local c = LocalPlayer and LocalPlayer.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function _ensureLinVel(root)
+    if _wsLinVel and _wsLinVel.Parent == root then return end
+    pcall(function()
+        if _wsLinAtt then _wsLinAtt:Destroy() end
+        if _wsLinVel then _wsLinVel:Destroy() end
+    end)
+    _wsLinAtt = Instance.new("Attachment")
+    _wsLinAtt.Name = "_wsA"
+    _wsLinAtt.Parent = root
+    _wsLinVel = Instance.new("LinearVelocity")
+    _wsLinVel.Name = "_wsLV"
+    _wsLinVel.Attachment0 = _wsLinAtt
+    _wsLinVel.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
+    _wsLinVel.PrimaryTangentAxis   = Vector3.new(1, 0, 0)
+    _wsLinVel.SecondaryTangentAxis = Vector3.new(0, 0, 1)
+    _wsLinVel.PlaneVelocity = Vector2.zero
+    _wsLinVel.MaxForce      = math.huge
+    _wsLinVel.RelativeTo    = Enum.ActuatorRelativeTo.World
+    _wsLinVel.Parent = root
+end
+
+local function _destroyLinVel()
+    pcall(function() if _wsLinAtt then _wsLinAtt:Destroy() end end)
+    pcall(function() if _wsLinVel then _wsLinVel:Destroy() end end)
+    _wsLinAtt = nil
+    _wsLinVel = nil
+end
+
+RunService.Heartbeat:Connect(function(dt)
+    local anyActive = wsValue ~= 16
+    if not anyActive then
+        if _wsUsePrim then
+            local h = getHum()
+            if h then pcall(function() h.WalkSpeed = 16 end) end
+            _destroyLinVel()
+        elseif _wsCurr.Magnitude > 0.05 or _wsSpring.Magnitude > 0.05 then
+            local dtC = math.clamp(dt, 0.008, 0.05)
+            local _f = -_wsCurr * _WS_K - _wsSpring * _WS_D
+            _wsSpring = _wsSpring + _f * dtC
+            _wsCurr   = _wsCurr   + _wsSpring * dtC
+            local root = getRoot()
+            if root then
+                pcall(function()
+                    if _wsLinVel and _wsLinVel.Parent then
+                        _wsLinVel.PlaneVelocity = Vector2.new(_wsCurr.X, _wsCurr.Z)
+                    else
+                        local v = root.AssemblyLinearVelocity
+                        root.AssemblyLinearVelocity = Vector3.new(_wsCurr.X, v.Y, _wsCurr.Z)
+                    end
+                end)
+            end
+        else
+            _wsCurr   = Vector3.zero
+            _wsSpring = Vector3.zero
+            _wsTarget = Vector3.zero
+            _destroyLinVel()
+        end
+        return
+    end
+
+    pcall(function()
+        local root = getRoot()
+        local hum  = getHum()
+        if not (hum and root) then return end
+
+        local activeSpeed = wsValue
+
+        if _wsUsePrim then
+            hum.WalkSpeed = activeSpeed
+            pcall(function() sethiddenproperty(hum, "WalkSpeed", 16) end)
+            _destroyLinVel()
+            _wsCurr   = Vector3.zero
+            _wsSpring = Vector3.zero
+            _wsTarget = Vector3.zero
+        else
+            hum.WalkSpeed = 16
+            if activeSpeed ~= 16 and hum.MoveDirection.Magnitude > 0.1 then
+                _wsTarget = Vector3.new(
+                    hum.MoveDirection.X, 0, hum.MoveDirection.Z
+                ).Unit * activeSpeed
+            else
+                _wsTarget = Vector3.zero
+            end
+            local dtC = math.clamp(dt, 0.008, 0.05)
+            local _f  = (_wsTarget - _wsCurr) * _WS_K - _wsSpring * _WS_D
+            _wsSpring = _wsSpring + _f * dtC
+            _wsCurr   = _wsCurr   + _wsSpring * dtC
+            if _wsTarget.Magnitude > 0.1 or _wsCurr.Magnitude > 0.3 then
+                pcall(function()
+                    _ensureLinVel(root)
+                    _wsLinVel.PlaneVelocity = Vector2.new(_wsCurr.X, _wsCurr.Z)
+                end)
+            else
+                _destroyLinVel()
+            end
+            local animator = hum:FindFirstChildOfClass("Animator")
+            if animator then
+                local targetAnimSpd = (activeSpeed == 16) and 1.0
+                    or math.clamp(activeSpeed / 16, 0.4, 2.5)
+                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                    pcall(function()
+                        if math.abs(track.Speed - targetAnimSpd) > 0.03 then
+                            track:AdjustSpeed(targetAnimSpd)
+                        end
+                    end)
+                end
+            end
+        end
+    end)
+end)
+
+MakeToggle("Walk Speed (32)", false, function(state)
+    wsValue = state and 32 or 16
 end)
 
 local exclLabel = Instance.new("TextLabel")
@@ -1146,6 +1241,129 @@ end)
 Players.PlayerRemoving:Connect(function(plr)
     wAS_excludedPlayers[plr.Name] = nil
 end)
+
+-- ============================================================
+-- FITUR LAINNYA
+-- ============================================================
+
+MakeSection("Light")
+
+local wLite_HEAVY  = 150
+local wLite_LIGHT  = 0.001
+local wLite_NORMAL = 0.7
+local wLite_modeA     = false
+local wLite_modeB     = false
+local wLite_force     = nil
+local wLite_lastSit   = false
+local wLite_lastPax   = nil
+local wLite_lastScan  = 0
+local wLite_cachedPax = nil
+local wLite_SCAN_GAP  = 0.3
+
+local function wLite_getRemote() return RS:FindFirstChild("WM_Req") end
+local function wLite_removeForce()
+    if wLite_force and wLite_force.Parent then wLite_force:Destroy() end
+    wLite_force = nil
+end
+local function wLite_applyForce(char, forceY)
+    wLite_removeForce()
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local bf = Instance.new("BodyForce")
+    bf.Force  = Vector3.new(0, forceY, 0)
+    bf.Parent = root
+    wLite_force = bf
+end
+local function wLite_fire(target, density)
+    local rem = wLite_getRemote()
+    if rem then rem:FireServer(target, density) end
+end
+local function wLite_isSitting()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    return hum:GetState() == Enum.HumanoidStateType.Seated
+end
+local function wLite_scanPax()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    for _, part in ipairs(workspace:GetDescendants()) do
+        if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
+            local oc = part.Occupant.Parent
+            if oc ~= char and Players:GetPlayerFromCharacter(oc) then return oc end
+        end
+    end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") or tool:IsA("Model") then
+            for _, part in ipairs(tool:GetDescendants()) do
+                if (part:IsA("Seat") or part:IsA("VehicleSeat")) and part.Occupant then
+                    local oc = part.Occupant.Parent
+                    if oc ~= char then return oc end
+                end
+            end
+        end
+    end
+    return nil
+end
+local function wLite_resetAll()
+    local char = LocalPlayer.Character
+    if char then wLite_fire(char, wLite_NORMAL) end
+    if wLite_lastPax then wLite_fire(wLite_lastPax, wLite_NORMAL) end
+    wLite_removeForce()
+    wLite_lastSit   = false
+    wLite_lastPax   = nil
+    wLite_cachedPax = nil
+end
+
+RunService.Heartbeat:Connect(function()
+    if not wLite_modeA and not wLite_modeB then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local sitting = wLite_isSitting()
+    local now = tick()
+    if now - wLite_lastScan >= wLite_SCAN_GAP then
+        wLite_cachedPax = wLite_scanPax()
+        wLite_lastScan  = now
+    end
+    local passenger = wLite_cachedPax
+    if wLite_modeA then
+        if sitting then
+            if not wLite_lastSit then
+                wLite_fire(char, wLite_HEAVY)
+                wLite_applyForce(char, -workspace.Gravity * 80)
+            end
+        else
+            if wLite_lastSit then
+                wLite_fire(char, wLite_NORMAL)
+                wLite_removeForce()
+            end
+            if passenger ~= wLite_lastPax then
+                if wLite_lastPax then wLite_fire(wLite_lastPax, wLite_NORMAL) end
+                if passenger    then wLite_fire(passenger, wLite_LIGHT) end
+            end
+        end
+    elseif wLite_modeB then
+        if sitting then
+            if not wLite_lastSit then
+                wLite_fire(char, wLite_LIGHT)
+                wLite_applyForce(char, workspace.Gravity * 80)
+            end
+        else
+            if wLite_lastSit then
+                wLite_fire(char, wLite_NORMAL)
+                wLite_removeForce()
+            end
+            if passenger ~= wLite_lastPax then
+                if wLite_lastPax then wLite_fire(wLite_lastPax, wLite_NORMAL) end
+                if passenger    then wLite_fire(passenger, wLite_HEAVY) end
+            end
+        end
+    end
+    wLite_lastSit = sitting
+    wLite_lastPax = passenger
+end)
+
 
 MakeSection("Wheelbarrow Fly")
 
@@ -1506,222 +1724,5 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
             wFly_savedWS = hum.WalkSpeed
             wFly_savedJP = hum.JumpPower
         end)
-    end
-end)
-
-MakeSection("Movement")
-
-local wsValue    = 16
-local _WS_K      = 80
-local _WS_D      = 18
-local _wsTarget  = Vector3.zero
-local _wsCurr    = Vector3.zero
-local _wsSpring  = Vector3.zero
-local _wsLinVel  = nil
-local _wsLinAtt  = nil
-local _wsUsePrim = false
-
-local function getHum()
-    local c = LocalPlayer and LocalPlayer.Character
-    return c and c:FindFirstChildOfClass("Humanoid")
-end
-local function getRoot()
-    local c = LocalPlayer and LocalPlayer.Character
-    return c and c:FindFirstChild("HumanoidRootPart")
-end
-
-local function _ensureLinVel(root)
-    if _wsLinVel and _wsLinVel.Parent == root then return end
-    pcall(function()
-        if _wsLinAtt then _wsLinAtt:Destroy() end
-        if _wsLinVel then _wsLinVel:Destroy() end
-    end)
-    _wsLinAtt = Instance.new("Attachment")
-    _wsLinAtt.Name = "_wsA"
-    _wsLinAtt.Parent = root
-    _wsLinVel = Instance.new("LinearVelocity")
-    _wsLinVel.Name = "_wsLV"
-    _wsLinVel.Attachment0 = _wsLinAtt
-    _wsLinVel.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
-    _wsLinVel.PrimaryTangentAxis   = Vector3.new(1, 0, 0)
-    _wsLinVel.SecondaryTangentAxis = Vector3.new(0, 0, 1)
-    _wsLinVel.PlaneVelocity = Vector2.zero
-    _wsLinVel.MaxForce      = math.huge
-    _wsLinVel.RelativeTo    = Enum.ActuatorRelativeTo.World
-    _wsLinVel.Parent = root
-end
-
-local function _destroyLinVel()
-    pcall(function() if _wsLinAtt then _wsLinAtt:Destroy() end end)
-    pcall(function() if _wsLinVel then _wsLinVel:Destroy() end end)
-    _wsLinAtt = nil
-    _wsLinVel = nil
-end
-
-RunService.Heartbeat:Connect(function(dt)
-    local anyActive = wsValue ~= 16
-    if not anyActive then
-        if _wsUsePrim then
-            local h = getHum()
-            if h then pcall(function() h.WalkSpeed = 16 end) end
-            _destroyLinVel()
-        elseif _wsCurr.Magnitude > 0.05 or _wsSpring.Magnitude > 0.05 then
-            local dtC = math.clamp(dt, 0.008, 0.05)
-            local _f = -_wsCurr * _WS_K - _wsSpring * _WS_D
-            _wsSpring = _wsSpring + _f * dtC
-            _wsCurr   = _wsCurr   + _wsSpring * dtC
-            local root = getRoot()
-            if root then
-                pcall(function()
-                    if _wsLinVel and _wsLinVel.Parent then
-                        _wsLinVel.PlaneVelocity = Vector2.new(_wsCurr.X, _wsCurr.Z)
-                    else
-                        local v = root.AssemblyLinearVelocity
-                        root.AssemblyLinearVelocity = Vector3.new(_wsCurr.X, v.Y, _wsCurr.Z)
-                    end
-                end)
-            end
-        else
-            _wsCurr   = Vector3.zero
-            _wsSpring = Vector3.zero
-            _wsTarget = Vector3.zero
-            _destroyLinVel()
-        end
-        return
-    end
-
-    pcall(function()
-        local root = getRoot()
-        local hum  = getHum()
-        if not (hum and root) then return end
-
-        local activeSpeed = wsValue
-
-        if _wsUsePrim then
-            hum.WalkSpeed = activeSpeed
-            pcall(function() sethiddenproperty(hum, "WalkSpeed", 16) end)
-            _destroyLinVel()
-            _wsCurr   = Vector3.zero
-            _wsSpring = Vector3.zero
-            _wsTarget = Vector3.zero
-        else
-            hum.WalkSpeed = 16
-            if activeSpeed ~= 16 and hum.MoveDirection.Magnitude > 0.1 then
-                _wsTarget = Vector3.new(
-                    hum.MoveDirection.X, 0, hum.MoveDirection.Z
-                ).Unit * activeSpeed
-            else
-                _wsTarget = Vector3.zero
-            end
-            local dtC = math.clamp(dt, 0.008, 0.05)
-            local _f  = (_wsTarget - _wsCurr) * _WS_K - _wsSpring * _WS_D
-            _wsSpring = _wsSpring + _f * dtC
-            _wsCurr   = _wsCurr   + _wsSpring * dtC
-            if _wsTarget.Magnitude > 0.1 or _wsCurr.Magnitude > 0.3 then
-                pcall(function()
-                    _ensureLinVel(root)
-                    _wsLinVel.PlaneVelocity = Vector2.new(_wsCurr.X, _wsCurr.Z)
-                end)
-            else
-                _destroyLinVel()
-            end
-            local animator = hum:FindFirstChildOfClass("Animator")
-            if animator then
-                local targetAnimSpd = (activeSpeed == 16) and 1.0
-                    or math.clamp(activeSpeed / 16, 0.4, 2.5)
-                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                    pcall(function()
-                        if math.abs(track.Speed - targetAnimSpd) > 0.03 then
-                            track:AdjustSpeed(targetAnimSpd)
-                        end
-                    end)
-                end
-            end
-        end
-    end)
-end)
-
-MakeSlider("Walk Speed", 1, 300, 16, 1, function(v) wsValue = v end)
-
-MakeSection("WalkFling")
-
-local _wfActive      = false
-local _wfNoclipConn  = nil
-local _wfLoopThread  = nil
-local _wfNoclipNames = { HumanoidRootPart = true, Torso = true, UpperTorso = true, LowerTorso = true, Head = true }
-
-local function _wfStartNoclip()
-    if _wfNoclipConn then return end
-    _wfNoclipConn = RunService.Stepped:Connect(function()
-        if not _wfActive then return end
-        local ch = LocalPlayer and LocalPlayer.Character
-        if not ch then return end
-        for _, v in pairs(ch:GetDescendants()) do
-            if v:IsA("BasePart") and _wfNoclipNames[v.Name] then
-                v.CanCollide = false
-            end
-        end
-    end)
-end
-
-local function _wfStopNoclip()
-    if _wfNoclipConn then
-        _wfNoclipConn:Disconnect()
-        _wfNoclipConn = nil
-    end
-    local ch = LocalPlayer and LocalPlayer.Character
-    if ch then
-        for _, v in pairs(ch:GetDescendants()) do
-            if v:IsA("BasePart") and _wfNoclipNames[v.Name] then
-                v.CanCollide = true
-            end
-        end
-    end
-end
-
-local function _wfLoop()
-    local movel = 0.1
-    repeat
-        RunService.Heartbeat:Wait()
-        local ch   = LocalPlayer and LocalPlayer.Character
-        local root = ch and ch:FindFirstChild("HumanoidRootPart")
-
-        while not (ch and ch.Parent and root and root.Parent) do
-            RunService.Heartbeat:Wait()
-            ch   = LocalPlayer and LocalPlayer.Character
-            root = ch and ch:FindFirstChild("HumanoidRootPart")
-        end
-
-        local vel = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = vel * 999999999999999999999 + Vector3.new(0, 999999999999999999999, 0)
-
-        RunService.RenderStepped:Wait()
-        if ch and ch.Parent and root and root.Parent then
-            root.AssemblyLinearVelocity = vel
-        end
-
-        RunService.Stepped:Wait()
-        if ch and ch.Parent and root and root.Parent then
-            root.AssemblyLinearVelocity = vel + Vector3.new(0, movel, 0)
-            movel = movel * -1
-        end
-    until not _wfActive
-end
-
-MakeToggle("WalkFling", false, function(state)
-    _wfActive = state
-    if state then
-        local ch  = LocalPlayer and LocalPlayer.Character
-        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum.Died:Connect(function()
-                _wfActive = false
-                _wfStopNoclip()
-            end)
-        end
-        _wfStartNoclip()
-        _wfLoopThread = task.spawn(_wfLoop)
-    else
-        _wfStopNoclip()
     end
 end)
