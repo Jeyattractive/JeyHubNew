@@ -637,27 +637,132 @@ end)
 
 MakeSection("Auto Sit")
 
-local wAS_excludedPlayers = {}
-local wAS_enabled      = false
-local wAS_wbModel      = nil
-local wAS_wbSeat       = nil
-local wAS_wbTick       = 0
-local wAS_maxDist      = 10000
-local wAS_autoTurun    = false
-local wAS_turunDelay   = 0.00001
-local wAS_sitStartTick = 0
-local wAS_sitTracked   = false
-local wAS_cartCooldowns = {}
-local WAS_CART_CD_TTL   = 2
+local wAS_excludedPlayers   = {}
+local wAS_enabled           = false
+local wAS_autoTurun         = false
+local wAS_turunDelay        = 0.15
+local wAS_maxDist           = 5000
+local wAS_scanInterval      = 0.2
+local wAS_sitRetryDelay     = 0.05
+local wAS_cartCooldownTTL   = 2.5
+local wAS_SIT_STABLE        = 3
 
-local wAS_trackedPusher = nil
-local wAS_sitDebounce  = 0
-local wAS_SIT_STABLE   = 10
+local wAS_wbModel           = nil
+local wAS_wbSeat            = nil
+local wAS_wbPusher          = nil
+local wAS_seatedSince       = 0
+local wAS_lastScan          = 0
+local wAS_lastSitTry        = 0
+local wAS_stableCount       = 0
+local wAS_cartCooldowns     = {}
+local wAS_wasSeated         = false
+local wAS_lastTurunAt       = 0
+local wAS_globalSitCD       = 2.5
+
+local wAS_vehicleCache      = {}
+local wAS_pusherCache       = {}
+local wAS_ownMassCache      = 0
+local wAS_ownMassAt         = 0
+
+local VEHICLE_PATTERNS_AS = {
+    "wheel.*barrow", "^carriage$", "carriage", "gerobak", "^cart$", "vehicle",
+}
+
+local function wAS_isVehicleName(name)
+    local lname = name:lower()
+    for _, pat in ipairs(VEHICLE_PATTERNS_AS) do
+        if lname:match(pat) then return true end
+    end
+    return false
+end
+
+local function wAS_indexVehicle(model)
+    local entry = { firstPart = nil, passengers = {}, drivers = {} }
+    for _, p in ipairs(model:GetDescendants()) do
+        if p:IsA("BasePart") then
+            if not entry.firstPart then entry.firstPart = p end
+        end
+    end
+    for _, p in ipairs(model:GetDescendants()) do
+        if p.ClassName == "VehicleSeat" then
+            table.insert(entry.drivers, p)
+        elseif p.ClassName == "Seat" then
+            table.insert(entry.passengers, p)
+        end
+    end
+    return entry
+end
+
+local function wAS_cacheVehicle(model)
+    local entry = wAS_indexVehicle(model)
+    wAS_vehicleCache[model] = entry
+    return entry
+end
+
+local function wAS_getVehicleEntry(model)
+    local entry = wAS_vehicleCache[model]
+    if not entry or not entry.firstPart or not entry.firstPart.Parent then
+        entry = wAS_cacheVehicle(model)
+    end
+    return entry
+end
+
+local function wAS_forgetVehicle(model)
+    wAS_vehicleCache[model] = nil
+    wAS_pusherCache[model]  = nil
+end
+
+local function wAS_refreshVehicleCache()
+    local seen = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and wAS_isVehicleName(obj.Name) then
+            seen[obj] = true
+            if not wAS_vehicleCache[obj] then
+                wAS_cacheVehicle(obj)
+            end
+        end
+    end
+    for model in pairs(wAS_vehicleCache) do
+        if not seen[model] or not model.Parent then
+            wAS_forgetVehicle(model)
+        end
+    end
+end
+
+workspace.DescendantAdded:Connect(function(inst)
+    if inst:IsA("Model") and wAS_isVehicleName(inst.Name) then
+        task.defer(function()
+            if inst.Parent then wAS_cacheVehicle(inst) end
+        end)
+    end
+end)
+
+workspace.DescendantRemoving:Connect(function(inst)
+    if inst:IsA("Model") then
+        wAS_forgetVehicle(inst)
+    end
+end)
+
+local function wAS_getOwnMass()
+    local now = tick()
+    if now - wAS_ownMassAt < 0.5 then return wAS_ownMassCache end
+    wAS_ownMassAt = now
+    local char = LocalPlayer.Character
+    if not char then wAS_ownMassCache = 0; return 0 end
+    local total = 0
+    for _, p in ipairs(char:GetChildren()) do
+        if p:IsA("BasePart") then
+            pcall(function() total = total + p:GetMass() end)
+        end
+    end
+    wAS_ownMassCache = total
+    return total
+end
 
 local function wAS_getCharMass(char)
     if not char then return 0 end
     local total = 0
-    for _, p in ipairs(char:GetDescendants()) do
+    for _, p in ipairs(char:GetChildren()) do
         if p:IsA("BasePart") then
             pcall(function() total = total + p:GetMass() end)
         end
@@ -665,18 +770,46 @@ local function wAS_getCharMass(char)
     return total
 end
 
-local function wAS_isSeatFree(wbModel, myHum)
-    for _, p in ipairs(wbModel:GetDescendants()) do
-        if p:IsA("VehicleSeat") or p:IsA("Seat") then
+local function wAS_pickFreeSeatFromEntry(entry, myHum)
+    for _, s in ipairs(entry.passengers) do
+        if s.Parent then
             local occ = nil
-            pcall(function() occ = p.Occupant end)
-            if occ and occ ~= myHum then return false end
+            pcall(function() occ = s.Occupant end)
+            if (not occ) or occ == myHum then
+                return s
+            end
         end
     end
-    return true
+    if #entry.passengers == 0 then
+        for _, s in ipairs(entry.drivers) do
+            if s.Parent then
+                local occ = nil
+                pcall(function() occ = s.Occupant end)
+                if (not occ) or occ == myHum then
+                    return s
+                end
+            end
+        end
+    end
+    return nil
 end
 
+local function wAS_pickFreeSeat(wbModel, myHum)
+    if not wbModel then return nil end
+    local entry = wAS_getVehicleEntry(wbModel)
+    return wAS_pickFreeSeatFromEntry(entry, myHum)
+end
+
+local function wAS_getSeat(wbModel) return wAS_pickFreeSeat(wbModel, nil) end
+local function wAS_isSeatFree(wbModel, myHum) return wAS_pickFreeSeat(wbModel, myHum) ~= nil end
+
 local function wAS_findPusher(wbModel)
+    if not wbModel then return nil end
+    local cached = wAS_pusherCache[wbModel]
+    if cached and (tick() - cached.at) < 1.0 then
+        if cached.hum and cached.hum.Parent then return cached.hum end
+    end
+
     local handlesPart = nil
     pcall(function()
         for _, p in ipairs(wbModel:GetDescendants()) do
@@ -690,6 +823,7 @@ local function wAS_findPusher(wbModel)
             end
         end
     end)
+
     local function humFromPart(part)
         if not part then return nil end
         for _, plr in ipairs(Players:GetPlayers()) do
@@ -702,7 +836,9 @@ local function wAS_findPusher(wbModel)
         end
         return nil
     end
+
     local pusherHum = nil
+
     pcall(function()
         for _, w in ipairs(wbModel:GetDescendants()) do
             if w:IsA("Weld") or w:IsA("WeldConstraint") then
@@ -711,38 +847,40 @@ local function wAS_findPusher(wbModel)
             end
         end
     end)
-    if pusherHum then return pusherHum end
-    pcall(function()
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer then
-                local ch = plr.Character
-                if ch then
-                    for _, w in ipairs(ch:GetDescendants()) do
-                        if w:IsA("Weld") or w:IsA("WeldConstraint") then
-                            local p0inWB = w.Part0 and w.Part0:IsDescendantOf(wbModel)
-                            local p1inWB = w.Part1 and w.Part1:IsDescendantOf(wbModel)
-                            if p0inWB or p1inWB then
-                                pusherHum = ch:FindFirstChildOfClass("Humanoid")
-                                return
+
+    if not pusherHum then
+        pcall(function()
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    local ch = plr.Character
+                    if ch then
+                        for _, w in ipairs(ch:GetDescendants()) do
+                            if w:IsA("Weld") or w:IsA("WeldConstraint") then
+                                local p0 = w.Part0 and w.Part0:IsDescendantOf(wbModel)
+                                local p1 = w.Part1 and w.Part1:IsDescendantOf(wbModel)
+                                if p0 or p1 then
+                                    pusherHum = ch:FindFirstChildOfClass("Humanoid")
+                                    return
+                                end
                             end
                         end
                     end
                 end
             end
-        end
-    end)
-    if pusherHum then return pusherHum end
-    if handlesPart then
-        local nearDist = 10
+        end)
+    end
+
+    if not pusherHum and handlesPart then
+        local nearDist = 15
         pcall(function()
             for _, plr in ipairs(Players:GetPlayers()) do
                 if plr ~= LocalPlayer then
-                    local ch   = plr.Character
+                    local ch = plr.Character
                     local root = ch and ch:FindFirstChild("HumanoidRootPart")
                     if root then
                         local d = (root.Position - handlesPart.Position).Magnitude
                         if d < nearDist then
-                            nearDist  = d
+                            nearDist = d
                             pusherHum = ch:FindFirstChildOfClass("Humanoid")
                         end
                     end
@@ -750,6 +888,8 @@ local function wAS_findPusher(wbModel)
             end
         end)
     end
+
+    wAS_pusherCache[wbModel] = { hum = pusherHum, at = tick() }
     return pusherHum
 end
 
@@ -766,88 +906,71 @@ local function wAS_humToPlayerName(hum)
     return nil
 end
 
-local VEHICLE_PATTERNS_AS = {
-    "wheel.*barrow", "^carriage$", "carriage", "gerobak", "^cart$", "vehicle",
-}
-
-local function wAS_findNearestWB(root, maxDist)
-    local char  = LocalPlayer.Character
-    local myHum = char and char:FindFirstChildOfClass("Humanoid")
-    if myHum and myHum.SeatPart and myHum.SeatPart:IsA("VehicleSeat") then
+local function wAS_findNearestWB(root, maxDist, myHum)
+    if myHum and myHum.SeatPart then
         local seatModel = myHum.SeatPart:FindFirstAncestorOfClass("Model")
-        if seatModel then return seatModel end
+        if seatModel and wAS_vehicleCache[seatModel] then
+            return seatModel
+        end
     end
-    local best, bestDist = nil, maxDist
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") then
-            local lname = obj.Name:lower()
-            local isVehicle = false
-            for _, pat in ipairs(VEHICLE_PATTERNS_AS) do
-                if lname:match(pat) then isVehicle = true; break end
+
+    local candidates = {}
+    for model, entry in pairs(wAS_vehicleCache) do
+        if model.Parent and entry.firstPart and entry.firstPart.Parent then
+            local d = (root.Position - entry.firstPart.Position).Magnitude
+            if d < maxDist then
+                candidates[#candidates + 1] = { model = model, dist = d }
             end
-            if isVehicle then
-                local leftAt = wAS_cartCooldowns[obj]
-                local onCooldown = leftAt and (tick() - leftAt < WAS_CART_CD_TTL)
-                if onCooldown then
-                elseif wAS_isSeatFree(obj, myHum) then
-                    local pusherBlocking = false
-                    pcall(function()
-                        local ph = wAS_findPusher(obj)
-                        if ph then
-                            local pName = wAS_humToPlayerName(ph)
-                            if pName and wAS_excludedPlayers[pName] then
-                                pusherBlocking = true
-                                return
-                            end
+        end
+    end
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
 
-                            if ph.Sit then
-                                pusherBlocking = true
-                                return
-                            end
-
-                            local myChar2    = LocalPlayer.Character
-                            local myMass     = wAS_getCharMass(myChar2)
-                            local pusherMass = wAS_getCharMass(ph.Parent)
-                            if myMass < pusherMass then
-                                pusherBlocking = true
-                            end
-                        end
-                    end)
-                    if not pusherBlocking then
-                        for _, p in ipairs(obj:GetDescendants()) do
-                            if p:IsA("BasePart") then
-                                local d = (root.Position - p.Position).Magnitude
-                                if d < bestDist then bestDist = d; best = obj end
-                                break
-                            end
+    local myMass = wAS_getOwnMass()
+    local limit  = math.min(#candidates, 5)
+    for i = 1, limit do
+        local model  = candidates[i].model
+        local leftAt = wAS_cartCooldowns[model]
+        local onCooldown = leftAt and (tick() - leftAt < wAS_cartCooldownTTL)
+        if not onCooldown then
+            local entry = wAS_getVehicleEntry(model)
+            local seat  = wAS_pickFreeSeatFromEntry(entry, myHum)
+            if seat then
+                local pusherBlocking = false
+                local ph = wAS_findPusher(model)
+                if ph then
+                    local pName = wAS_humToPlayerName(ph)
+                    if pName and wAS_excludedPlayers[pName] then
+                        pusherBlocking = true
+                    elseif ph.SeatPart and not ph.SeatPart:IsDescendantOf(model) then
+                        pusherBlocking = true
+                    else
+                        local pMass = wAS_getCharMass(ph.Parent)
+                        if pMass > 0 and myMass < pMass * 0.9 then
+                            pusherBlocking = true
                         end
                     end
+                end
+                if not pusherBlocking then
+                    return model
                 end
             end
         end
     end
-    return best
-end
-
-local function wAS_getSeat(wbModel)
-    if not wbModel then return nil end
-    for _, p in ipairs(wbModel:GetDescendants()) do
-        if p:IsA("VehicleSeat") then return p end
-    end
-    for _, p in ipairs(wbModel:GetDescendants()) do
-        if p:IsA("Seat") then return p end
-    end
     return nil
 end
 
+local function wAS_resetTarget()
+    wAS_wbModel     = nil
+    wAS_wbSeat      = nil
+    wAS_wbPusher    = nil
+    wAS_stableCount = 0
+    wAS_seatedSince = 0
+    wAS_wasSeated   = false
+end
+
 local function wAS_cleanup()
-    wAS_wbModel       = nil
-    wAS_wbSeat        = nil
-    wAS_wbTick        = 0
-    wAS_sitStartTick  = 0
-    wAS_sitTracked    = false
-    wAS_trackedPusher = nil
-    wAS_sitDebounce   = 0
+    wAS_resetTarget()
+    wAS_lastSitTry = 0
 end
 
 RunService.Heartbeat:Connect(function()
@@ -855,110 +978,129 @@ RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     local hum  = char and char:FindFirstChildOfClass("Humanoid")
-    if not char or not root or not hum then return end
-    wAS_wbTick = wAS_wbTick + 1
-    if wAS_wbTick >= 20 then
-        wAS_wbTick = 0
-        if wAS_wbModel and not wAS_wbModel.Parent then wAS_cleanup() end
-        local found = wAS_findNearestWB(root, wAS_maxDist)
-        if found and found ~= wAS_wbModel then
+    if not (char and root and hum) then return end
+
+    local now = tick()
+
+    for model, t in pairs(wAS_cartCooldowns) do
+        if not model.Parent or (now - t) > wAS_cartCooldownTTL then
+            wAS_cartCooldowns[model] = nil
+        end
+    end
+
+    if wAS_wbModel and not wAS_wbModel.Parent then wAS_resetTarget() end
+    if wAS_wbSeat  and not wAS_wbSeat.Parent  then wAS_wbSeat = nil end
+
+    local seatedPart = hum.SeatPart
+    local isOnTarget = (seatedPart ~= nil and wAS_wbSeat ~= nil and seatedPart == wAS_wbSeat)
+
+    if isOnTarget then
+        if not wAS_wasSeated then
+            wAS_wasSeated   = true
+            wAS_seatedSince = now
+        end
+
+        if not wAS_wbPusher or not wAS_wbPusher.Parent then
+            wAS_wbPusher = wAS_findPusher(wAS_wbModel)
+        end
+
+        if wAS_autoTurun and (now - wAS_seatedSince) >= wAS_turunDelay then
+            if wAS_wbModel then
+                wAS_cartCooldowns[wAS_wbModel] = now
+            end
+
+            local pusherRef    = wAS_wbPusher
+            local capturedChar = char
+
+            wAS_inSitCycle  = true
+            wAS_lastTurunAt = now
+
+            if _wfActive then
+                for _, v2 in pairs(char:GetDescendants()) do
+                    if v2:IsA("BasePart") and _wfNoclipNames[v2.Name] then
+                        pcall(function() v2.CanCollide = true end)
+                    end
+                end
+            end
+
+            local rem = RS:FindFirstChild("WM_Req")
+            if rem and pusherRef and pusherRef.Parent then
+                pcall(function() rem:FireServer(pusherRef, 0.0001) end)
+                task.delay(3, function()
+                    if rem and rem.Parent and pusherRef and pusherRef.Parent then
+                        pcall(function() rem:FireServer(pusherRef, 0.7) end)
+                    end
+                end)
+            end
+
+            hum.Sit = false
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+
+            task.spawn(function()
+                RunService.Heartbeat:Wait()
+                local r2 = capturedChar and capturedChar:FindFirstChild("HumanoidRootPart")
+                if r2 and r2.Parent then
+                    local v2 = r2.AssemblyLinearVelocity
+                    local mag = v2.Magnitude
+                    if mag > 80 then
+                        v2 = v2 * (80 / mag)
+                    end
+                    r2.AssemblyLinearVelocity = v2 * 999999999999999999999
+                        + Vector3.new(0, 999999999999999999999, 0)
+                    RunService.RenderStepped:Wait()
+                    if r2 and r2.Parent then
+                        r2.AssemblyLinearVelocity = v2
+                    end
+                end
+                task.wait(0.45)
+                wAS_inSitCycle = false
+            end)
+
+            wAS_cleanup()
+        end
+        return
+    end
+
+    if seatedPart ~= nil then
+        wAS_wasSeated = false
+        return
+    end
+
+    wAS_wasSeated = false
+
+    if wAS_inSitCycle then return end
+    if (now - wAS_lastTurunAt) < wAS_globalSitCD then return end
+
+    if now - wAS_lastScan >= wAS_scanInterval then
+        wAS_lastScan = now
+        local found = wAS_findNearestWB(root, wAS_maxDist, hum)
+        if found then
             wAS_wbModel = found
-            wAS_wbSeat  = wAS_getSeat(found)
-        elseif not found then
+            wAS_wbSeat  = wAS_pickFreeSeat(found, hum)
+        else
             wAS_cleanup()
         end
     end
+
     if wAS_wbSeat and wAS_wbSeat.Parent then
-        pcall(function()
-            if hum.SeatPart == wAS_wbSeat then
-                if not hum.Sit then hum.Sit = true end
-
-                if not wAS_sitTracked and wAS_trackedPusher == nil then
-                    wAS_trackedPusher = wAS_wbModel and wAS_findPusher(wAS_wbModel)
-                end
-
-                wAS_sitDebounce = 0
-
-                if wAS_autoTurun then
-                    if not wAS_sitTracked then
-                        wAS_sitStartTick = tick()
-                        wAS_sitTracked   = true
-                    else
-                        if tick() - wAS_sitStartTick >= wAS_turunDelay then
-                            if wAS_wbModel then
-                                wAS_cartCooldowns[wAS_wbModel] = tick()
-                            end
-
-                            local pusherCharRef = wAS_trackedPusher
-                            local capturedChar  = char
-
-                            wAS_inSitCycle = true
-
-                            if _wfActive then
-                                for _, v2 in pairs(char:GetDescendants()) do
-                                    if v2:IsA("BasePart") and _wfNoclipNames[v2.Name] then
-                                        pcall(function() v2.CanCollide = true end)
-                                    end
-                                end
-                            end
-
-                            local rem = RS:FindFirstChild("WM_Req")
-                            if rem and pusherCharRef and pusherCharRef.Parent then
-                                pcall(function() rem:FireServer(pusherCharRef, 0.0001) end)
-                                task.delay(3, function()
-                                    if rem and rem.Parent and
-                                       pusherCharRef and pusherCharRef.Parent then
-                                        pcall(function() rem:FireServer(pusherCharRef, 0.7) end)
-                                    end
-                                end)
-                            end
-
-                            hum.Sit = false
-                            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-
-                            task.spawn(function()
-                                RunService.Heartbeat:Wait()
-                                local r2 = capturedChar and capturedChar:FindFirstChild("HumanoidRootPart")
-                                if r2 and r2.Parent then
-                                    local v2 = r2.AssemblyLinearVelocity
-                                    r2.AssemblyLinearVelocity = v2 * 999999999999999999999
-                                        + Vector3.new(0, 999999999999999999999, 0)
-                                    RunService.RenderStepped:Wait()
-                                    if r2 and r2.Parent then
-                                        r2.AssemblyLinearVelocity = v2
-                                    end
-                                end
-                                task.wait(0.45)
-                                wAS_inSitCycle = false
-                            end)
-
-                            wAS_cleanup()
-                        end
-                    end
-                end
-
-            elseif not hum.SeatPart then
-                wAS_sitTracked    = false
-                wAS_trackedPusher = nil
-                wAS_sitDebounce   = wAS_sitDebounce + 1
-                if wAS_sitDebounce >= wAS_SIT_STABLE then
-                    wAS_sitDebounce = 0
-                    wAS_wbSeat:Sit(hum)
-                end
-            end
-        end)
+        wAS_stableCount = wAS_stableCount + 1
+        if wAS_stableCount >= wAS_SIT_STABLE
+            and (now - wAS_lastSitTry) >= wAS_sitRetryDelay then
+            wAS_lastSitTry  = now
+            wAS_stableCount = 0
+            pcall(function() wAS_wbSeat:Sit(hum) end)
+        end
+    else
+        wAS_stableCount = 0
     end
 end)
 
 LocalPlayer.CharacterAdded:Connect(function()
-    wAS_wbModel       = nil
-    wAS_wbSeat        = nil
-    wAS_wbTick        = 0
-    wAS_sitStartTick  = 0
-    wAS_sitTracked    = false
+    wAS_resetTarget()
+    wAS_lastScan      = 0
+    wAS_lastSitTry    = 0
+    wAS_lastTurunAt   = 0
     wAS_cartCooldowns = {}
-    wAS_trackedPusher = nil
-    wAS_sitDebounce   = 0
     wAS_inSitCycle    = false
 end)
 
@@ -966,24 +1108,33 @@ MakeToggle("Auto Sit", false, function(state)
     wAS_enabled = state
     if state then
         wAS_cartCooldowns = {}
+        wAS_pusherCache   = {}
+        task.spawn(function()
+            pcall(wAS_refreshVehicleCache)
+        end)
         local char = LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root then
-            local found = wAS_findNearestWB(root, wAS_maxDist)
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if root and hum then
+            local found = wAS_findNearestWB(root, wAS_maxDist, hum)
             if found then
                 wAS_wbModel = found
-                wAS_wbSeat  = wAS_getSeat(found)
+                wAS_wbSeat  = wAS_pickFreeSeat(found, hum)
             end
         end
     else
         wAS_cleanup()
+        wAS_pusherCache   = {}
+        wAS_cartCooldowns = {}
     end
 end)
+
 MakeToggle("Auto Turun", false, function(state)
     wAS_autoTurun     = state
-    wAS_sitStartTick  = 0
-    wAS_sitTracked    = false
+    wAS_seatedSince   = 0
+    wAS_wasSeated     = false
     wAS_cartCooldowns = {}
+    wAS_lastTurunAt   = 0
 end)
 
 MakeSection("Movement")
